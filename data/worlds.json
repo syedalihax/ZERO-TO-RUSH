@@ -1,0 +1,233 @@
+{
+  "test_smoke": {
+    "id": "test_smoke",
+    "name": "Smoke Bistro",
+    "stage": 2,
+    "createdAt": 1795535959647,
+    "lastPlayedAt": 1795586571185,
+    "day": 6,
+    "cashCents": 355,
+    "totalServed": 56,
+    "unlockedRecipes": [
+      "tea",
+      "doodh_patti"
+    ],
+    "furniture": [
+      {
+        "id": "furn_1795586185596_141",
+        "kind": "chair",
+        "x": -7.141340000000171,
+        "z": -4.113916099086761,
+        "rotationY": 1.5707963267948966
+      },
+      {
+        "id": "furn_1795586458536_565",
+        "kind": "chair",
+        "x": -5.409752253502378,
+        "z": -4.35553388136085,
+        "rotationY": -1.5707963267948966
+      }
+    ],
+    "pendingFurniture": [],
+    "activeShift": {
+      "stage": 2,
+      "day": 6,
+      "timeLeft": 187.3936999999787,
+      "shiftDuration": 300,
+      "earningsCents": 130,
+      "servedCount": 3,
+      "missedCount": 0,
+      "player": {
+        "x": -8.6,
+        "z": -2.866174580316072,
+        "yaw": -1.5707963267948966,
+        "holding": "carried_table",
+        "walkCycle": 487.22834999999696,
+        "dashCooldown": 0,
+        "dashTimer": 0,
+        "isMoving": true,
+        "sittingChairId": null
+      },
+      "trayItem": null,
+      "trayItems": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "inventory": {
+        "cups": 11,
+        "teaLeaves": 18,
+        "sugar": 18,
+        "water": 13,
+        "milkPackets": 20,
+        "coffeePowder": 0,
+        "biscuits": 11,
+        "cupcakes": 11
+      },
+      "kettle": {
+        "status": "idle",
+        "progress": 0,
+        "brewingDrink": null
+      },
+      "milkman": {
+        "phase": "away",
+        "timer": -0.006599999999798666,
+        "x": 24.069000000000223,
+        "z": 2.45,
+        "nextArrivalElapsed": 213.45522909161093
+      },
+      "carCustomer": {
+        "phase": "away",
+        "x": -24.010499999999993,
+        "z": 3.95,
+        "orderDrink": "tea",
+        "qtyTotal": 2,
+        "qtyServed": 2,
+        "patience": 72.27629999999961,
+        "maxPatience": 85,
+        "nextArrivalElapsed": 161.4192189649628,
+        "carColor": "#D97706"
+      },
+      "supermarketOwner": {
+        "x": 3.7786087000956416,
+        "z": -2.665584764302504,
+        "yaw": -2.2004315653663564,
+        "phase": "walking_to_stall",
+        "targetX": 2.05,
+        "targetZ": 1.02,
+        "waitTimer": 5.276648312286971,
+        "nextVisitTimer": -0.011439443526072658,
+        "orderDrink": "doodh_patti",
+        "patience": 115,
+        "maxPatience": 115,
+        "drinkTimer": 0,
+        "walkCycle": 618.6166332500287
+      },
+      "customers": [
+        {
+          "id": "cust_2",
+          "seq": 2,
+          "slotIndex": 0,
+          "x": -4.979384054478675,
+          "z": -3.9024543381790373,
+          "yaw": 2.8046927213675885,
+          "targetX": -7.141340000000171,
+          "targetZ": -4.113916099086761,
+          "status": "walking_in",
+          "orderDrink": "tea",
+          "patience": 116.68092798689415,
+          "maxPatience": 116.68092798689415,
+          "drinkTimer": 0,
+          "walkCycle": 978.10622524997,
+          "shirtColor": "#059669",
+          "hairColor": "#78350F",
+          "targetChairId": "furn_1795586185596_141",
+          "seatedChairId": null
+        },
+        {
+          "id": "cust_8",
+          "seq": 8,
+          "slotIndex": 0,
+          "x": -4.519046115737092,
+          "z": -2.9072044967347206,
+          "yaw": 0.8554089661965464,
+          "targetX": -5.409752253502378,
+          "targetZ": -4.35553388136085,
+          "status": "walking_out",
+          "orderDrink": "cupcake",
+          "patience": 64.38116864528355,
+          "maxPatience": 107.20316864528492,
+          "drinkTimer": -0.00010000000009784821,
+          "walkCycle": 318.6670795000009,
+          "shirtColor": "#059669",
+          "hairColor": "#1C1917",
+          "targetChairId": null,
+          "seatedChairId": null
+        },
+        {
+          "id": "cust_19",
+          "seq": 19,
+          "slotIndex": 0,
+          "x": -3.01237755745146,
+          "z": -4.327096956791527,
+          "yaw": -1.5873531830946193,
+          "targetX": -5.409752253502378,
+          "targetZ": -4.35553388136085,
+          "status": "walking_in",
+          "orderDrink": "cupcake",
+          "patience": 118.31514898168537,
+          "maxPatience": 118.31514898168537,
+          "drinkTimer": 0,
+          "walkCycle": 111.28696424999954,
+          "shirtColor": "#DB2777",
+          "hairColor": "#292524",
+          "targetChairId": "furn_1795586458536_565",
+          "seatedChairId": null
+        }
+      ],
+      "pedestrians": [
+        {
+          "id": "ped_15",
+          "seq": 15,
+          "x": 4.534878189911958,
+          "z": -3.356354027208367,
+          "targetX": -14.4,
+          "targetZ": -3.1091039604441475,
+          "yaw": -2.0084020137320406,
+          "speed": 1.7177437067093069,
+          "walkCycle": 213.95020730970836,
+          "shirtColor": "#0284C7",
+          "hairColor": "#1C1917",
+          "hasBag": true
+        },
+        {
+          "id": "ped_16",
+          "seq": 16,
+          "x": -6.122072771971483,
+          "z": -2.5250032917072374,
+          "targetX": 14.6,
+          "targetZ": -3.1481004972068765,
+          "yaw": -0.7001045955521943,
+          "speed": 1.5904813648652558,
+          "walkCycle": 161.44367715339502,
+          "shirtColor": "#2563EB",
+          "hairColor": "#451A03",
+          "hasBag": false
+        },
+        {
+          "id": "ped_18",
+          "seq": 18,
+          "x": -6.48087874588757,
+          "z": -3.9075510813742027,
+          "targetX": 14.6,
+          "targetZ": -3.2374007824136912,
+          "yaw": -0.7620670066183173,
+          "speed": 1.8259163035366008,
+          "walkCycle": 126.83627884978787,
+          "shirtColor": "#059669",
+          "hairColor": "#292524",
+          "hasBag": true
+        },
+        {
+          "id": "ped_20",
+          "seq": 20,
+          "x": -11.592085680598235,
+          "z": -3.1209030739288695,
+          "targetX": 14.6,
+          "targetZ": -3.1209030739288695,
+          "yaw": 1.5707963267948966,
+          "speed": 1.534067246706923,
+          "walkCycle": 14.818423242803261,
+          "shirtColor": "#D97706",
+          "hairColor": "#451A03",
+          "hasBag": false
+        }
+      ],
+      "spawnTimer": 10.488606756966457,
+      "pedestrianSpawnTimer": 3.359153116984543,
+      "nextCustomerSeq": 21,
+      "phase": "playing"
+    }
+  }
+}

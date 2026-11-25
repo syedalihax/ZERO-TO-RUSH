@@ -1,0 +1,6 @@
+{
+  "name": "Rush Hour Cafe",
+  "description": "4-player co-op cafe cooking & serving game with real-time multiplayer and persistent Minecraft-style cafe worlds.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
