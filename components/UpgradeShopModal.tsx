@@ -10,8 +10,13 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useMenuKeyboard } from '@/hooks/use-menu-keyboard';
-import { RENTABLE_BUILDINGS, formatMoney } from '@/lib/game/constants';
-import type { ShiftSnapshot, WorldSave } from '@/lib/game/types';
+import {
+  HELPER_NPCS,
+  RENTABLE_BUILDINGS,
+  formatMoney,
+} from '@/lib/game/constants';
+import { getShiftHelpers } from '@/lib/game/engine';
+import type { HelperNpcId, ShiftSnapshot, WorldSave } from '@/lib/game/types';
 
 interface UpgradeShopModalProps {
   world: WorldSave;
@@ -111,18 +116,60 @@ export default function UpgradeShopModal({
                 ` · ${shift.inventory.pakoraMix} Pakora`}
               {(world.hasSnacksCart || shift.inventory.cookingOil > 0) &&
                 ` · ${shift.inventory.cookingOil} Oil`}
+              {(world.hasColdCart || shift.inventory.iceBlocks > 0) &&
+                ` · ${shift.inventory.iceBlocks} Ice`}
+              {(world.hasColdCart || shift.inventory.coldDrinkBottles > 0) &&
+                ` · ${shift.inventory.coldDrinkBottles} Soda`}
+              {(world.hasColdCart || shift.inventory.iceCreamMix > 0) &&
+                ` · ${shift.inventory.iceCreamMix} IC Mix`}
+              {(world.hasColdCart || shift.inventory.iceCreamCones > 0) &&
+                ` · ${shift.inventory.iceCreamCones} Cones`}
             </span>
           </div>
 
-          {shift.helper.status === 'hired' && (
-            <div className="p-3.5 rounded-lg bg-[#78350F]/30 border border-[#FBBF24]/40 flex items-start gap-3 text-xs text-[#FEF3C7] tabular-nums">
-              <HeartHandshake className="w-4 h-4 text-[#FBBF24] shrink-0 mt-0.5" />
+          {(() => {
+            const hiredHelpers = getShiftHelpers(shift).filter(
+              (h) => h.status === 'hired'
+            );
+            if (hiredHelpers.length === 0) return null;
+            return (
+              <div className="p-3.5 rounded-lg bg-[#78350F]/30 border border-[#FBBF24]/40 space-y-1.5 text-xs text-[#FEF3C7] tabular-nums">
+                <div className="flex items-center gap-2 font-bold">
+                  <HeartHandshake className="w-4 h-4 text-[#FBBF24] shrink-0" />
+                  <span>Helper Shift Summary ({hiredHelpers.length} Hired):</span>
+                </div>
+                {hiredHelpers.map((h) => {
+                  const hId: HelperNpcId = h.id ?? 'chotu';
+                  const cfg = HELPER_NPCS[hId];
+                  return (
+                    <div key={hId} className="pl-6">
+                      <span className="font-semibold text-[#FFFDF9]">
+                        {cfg.name}
+                      </span>{' '}
+                      ({cfg.role === 'snacks_only' ? 'Snacks Readi' : 'General'}):{' '}
+                      Served {h.servedCount} order
+                      {h.servedCount === 1 ? '' : 's'} ·{' '}
+                      {formatMoney(h.wageEarnedCents)} wages paid
+                    </div>
+                  );
+                })}
+                <div className="pl-6 text-[#FDE68A]/80">
+                  Helpers rest tonight and return to their spots tomorrow!
+                </div>
+              </div>
+            );
+          })()}
+
+          {(shift.beggarKidsHelped ?? 0) > 0 && (
+            <div className="p-3.5 rounded-lg bg-[#14532D]/35 border border-[#86EFAC]/40 flex items-start gap-3 text-xs text-[#DCFCE7] tabular-nums">
+              <HeartHandshake className="w-4 h-4 text-[#86EFAC] shrink-0 mt-0.5" />
               <div>
-                <span className="font-bold">Chotu Helper Shift Summary:</span>{' '}
-                Served {shift.helper.servedCount} cup
-                {shift.helper.servedCount === 1 ? '' : 's'} today (
-                {formatMoney(shift.helper.wageEarnedCents)} wages paid). Chotu
-                rests tonight and waits outside the Supermarket tomorrow!
+                <span className="font-bold">
+                  Blessing Earned ({shift.beggarKidsHelped} Poor Kid
+                  {(shift.beggarKidsHelped ?? 0) > 1 ? 's' : ''} Helped Today):
+                </span>{' '}
+                +{shift.salesBoostPercent ?? 0}% Sales Price Boost &amp; Extra
+                Customers visited your stall!
               </div>
             </div>
           )}
@@ -154,14 +201,19 @@ export default function UpgradeShopModal({
               <div>
                 <span className="font-bold">Level 2 Unlocked!</span> Walk into the{' '}
                 <span className="font-semibold">
-                  Open Supermarket on the right (E)
+                  Open Supermarket (E)
                 </span>{' '}
                 to buy the{' '}
                 <span className="font-semibold">Doodh Patti ($1.00)</span>,{' '}
-                <span className="font-semibold">Coffee ($1.10)</span> &amp;{' '}
-                <span className="font-semibold">Samosa &amp; Pakora</span>{' '}
-                recipes, 2nd Snacks Readi, Chairs &amp; Tables, or rent street
-                shops from their owners!
+                <span className="font-semibold">Coffee ($1.10)</span>,{' '}
+                <span className="font-semibold">Samosa &amp; Pakora</span> &amp;{' '}
+                <span className="font-semibold">Cold Drinks &amp; Ice Cream</span>{' '}
+                recipes, visit{' '}
+                <span className="font-semibold text-[#FDE68A]">
+                  Wood Master Workshop
+                </span>{' '}
+                to craft Chairs, Tables, Shop Kitchens, 2nd &amp; 3rd Readi carts, or rent
+                street shops from their owners!
               </div>
             </div>
           )}

@@ -2,51 +2,72 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  CHAI_STALL_PRICE_CENTS,
+  CHAIR_PRICE_CENTS,
   DRINK_CATALOG,
   HELPER_CHARITY_CENTS,
+  HELPER_NPCS,
   MILKMAN_CATALOG,
   RENTABLE_BUILDINGS,
+  RESALE_RATE,
   SHOP_WEEK_DAYS,
   SNACKS_CART_PRICE_CENTS,
   SUPERMARKET_CATALOG,
+  TABLE_PRICE_CENTS,
+  WOOD_MASTER_CATALOG,
   formatMoney,
 } from '@/lib/game/constants';
 import { cafeAudio } from '@/lib/game/audio';
 import {
   createInitialShift,
   findInteractTarget,
+  findInteractTargetForPlayer,
   getAvailableMenuChoices,
   getGuidedHint,
+  getShiftBeggarKids,
+  getShiftHelpers,
+  getShiftShopVisitors,
+  isMenuItemEnabled,
   stepStage1Simulation,
 } from '@/lib/game/engine';
 import { loadAllWorlds, persistWorld, removeWorld } from '@/lib/game/storage';
 import { Chai3DSceneController } from '@/lib/game/threeScene';
 import type {
   DrinkType,
+  HelperNpcId,
   ProjectedLabel,
   ShiftSnapshot,
   ShopBuildingId,
   Stage1Input,
+  WoodMasterOrder,
+  WoodOrderKind,
   WorldSave,
 } from '@/lib/game/types';
 import { useIsMobile } from '@/hooks/use-mobile';
 import BuildingRentModal from './BuildingRentModal';
+import CoopInviteModal from './CoopInviteModal';
 import CustomerActionModal from './CustomerActionModal';
 import GameHUD from './GameHUD';
+import GearBuyerModal from './GearBuyerModal';
 import KidHelperModal from './KidHelperModal';
 import MilkmanShopModal from './MilkmanShopModal';
 import PauseModal from './PauseModal';
+import SalesMenuModal from './SalesMenuModal';
 import SupermarketModal from './SupermarketModal';
 import TitleScreen from './TitleScreen';
 import UpgradeShopModal from './UpgradeShopModal';
+import WoodMasterModal from './WoodMasterModal';
 import WorldSelectModal from './WorldSelectModal';
 
 type ScreenState = 'TITLE' | 'WORLD_SELECT' | 'PLAYING';
 
 interface CustomerActionState {
-  kind: 'customer' | 'car';
+  kind: 'customer' | 'car' | 'owner_customer' | 'shop_visitor' | 'beggar_kid';
   id: string;
   requestedDrink: DrinkType;
+  actorId?: 'p1' | 'p2';
+  npcLabel?: string;
+  isFreeHelp?: boolean;
 }
 
 export default function RushHourCafeApp() {
@@ -61,6 +82,7 @@ export default function RushHourCafeApp() {
   const [projectedLabels, setProjectedLabels] = useState<ProjectedLabel[]>([]);
   const [guidedHint, setGuidedHint] = useState('');
   const [targetPrompt, setTargetPrompt] = useState<string | null>(null);
+  const [p2TargetPrompt, setP2TargetPrompt] = useState<string | null>(null);
   const [feedbackBanner, setFeedbackBanner] = useState<{
     text: string;
     color: string;
@@ -69,7 +91,14 @@ export default function RushHourCafeApp() {
   const [paused, setPaused] = useState(false);
   const [showSupermarket, setShowSupermarket] = useState(false);
   const [showMilkmanShop, setShowMilkmanShop] = useState(false);
-  const [showHelperModal, setShowHelperModal] = useState(false);
+  const [activeHelperId, setActiveHelperId] = useState<HelperNpcId | null>(
+    null
+  );
+  const [showGearBuyer, setShowGearBuyer] = useState(false);
+  const [showWoodMaster, setShowWoodMaster] = useState(false);
+  const [woodMasterActor, setWoodMasterActor] = useState<'p1' | 'p2'>('p1');
+  const [showCoopModal, setShowCoopModal] = useState(false);
+  const [showSalesMenu, setShowSalesMenu] = useState(false);
   const [buildingOwnerId, setBuildingOwnerId] = useState<ShopBuildingId | null>(
     null
   );
@@ -107,7 +136,11 @@ export default function RushHourCafeApp() {
       paused ||
       showSupermarket ||
       showMilkmanShop ||
-      showHelperModal ||
+      activeHelperId !== null ||
+      showGearBuyer ||
+      showWoodMaster ||
+      showCoopModal ||
+      showSalesMenu ||
       buildingOwnerId !== null ||
       customerAction !== null;
     modalOpenRef.current = anyModal;
@@ -118,7 +151,11 @@ export default function RushHourCafeApp() {
     paused,
     showSupermarket,
     showMilkmanShop,
-    showHelperModal,
+    activeHelperId,
+    showGearBuyer,
+    showWoodMaster,
+    showCoopModal,
+    showSalesMenu,
     buildingOwnerId,
     customerAction,
   ]);
@@ -200,11 +237,21 @@ export default function RushHourCafeApp() {
     setPaused(false);
     setShowSupermarket(false);
     setShowMilkmanShop(false);
-    setShowHelperModal(false);
+    setActiveHelperId(null);
+    setShowGearBuyer(false);
+    setShowWoodMaster(false);
+    setShowCoopModal(false);
+    setShowSalesMenu(false);
     setBuildingOwnerId(null);
     setCustomerAction(null);
     setGuidedHint(getGuidedHint(shift, updatedWorld));
     setTargetPrompt(findInteractTarget(shift, updatedWorld)?.prompt || null);
+    setP2TargetPrompt(
+      shift.player2?.active
+        ? findInteractTargetForPlayer(shift.player2, shift, updatedWorld)
+            ?.prompt || null
+        : null
+    );
     setScreen('PLAYING');
   }, []);
 
@@ -231,19 +278,6 @@ export default function RushHourCafeApp() {
     s.inventory.pakoraMix += item.addPakoraMix ?? 0;
     s.inventory.cookingOil += item.addCookingOil ?? 0;
 
-    let bannerText = `Bought ${item.name}!`;
-    if (item.addFurniture) {
-      if (s.player.holding === null) {
-        s.player.holding =
-          item.addFurniture === 'chair' ? 'carried_chair' : 'carried_table';
-        setShowSupermarket(false);
-        bannerText = `Picked up ${item.addFurniture === 'chair' ? 'Chair' : 'Table'}! Place outside with E`;
-      } else {
-        w.pendingFurniture = [...w.pendingFurniture, item.addFurniture];
-        bannerText = `Bought ${item.name}! Pick up at Supermarket entrance pad (E)`;
-      }
-    }
-
     w.lastPlayedAt = Date.now();
     w.activeShift = s;
 
@@ -251,10 +285,10 @@ export default function RushHourCafeApp() {
     setActiveWorld({ ...w });
     setHudShift({ ...s });
     setFeedbackBanner({
-      text: bannerText,
+      text: `Bought ${item.name}!`,
       color: '#86EFAC',
     });
-    feedbackTimerRef.current = item.addFurniture ? 2.4 : 1.6;
+    feedbackTimerRef.current = 1.6;
     persistWorld(w);
   }, []);
 
@@ -314,62 +348,35 @@ export default function RushHourCafeApp() {
     setFeedbackBanner({
       text:
         drink === 'samosa' || drink === 'pakora'
-          ? 'Unlocked Samosa & Pakora Recipe! Buy the 2nd Snacks Readi next!'
+          ? 'Unlocked Samosa & Pakora Recipe! Order the 2nd Snacks Readi at Wood Master Workshop!'
           : `Unlocked ${info.name} Recipe!`,
       color: '#FDE68A',
     });
-    feedbackTimerRef.current = 2.4;
+    feedbackTimerRef.current = 2.6;
     persistWorld(w);
   }, []);
 
-  const handleBuySnacksCart = useCallback(() => {
+  const handleGiveHelperCharity = useCallback((helperId: HelperNpcId) => {
     const w = worldRef.current;
     const s = shiftRef.current;
     if (!w || !s) return;
-    const hasRecipe =
-      w.unlockedRecipes.includes('samosa') ||
-      w.unlockedRecipes.includes('pakora');
+    const helpers = getShiftHelpers(s);
+    const target = helpers.find((h) => (h.id ?? 'chotu') === helperId);
     if (
-      !hasRecipe ||
-      w.hasSnacksCart ||
-      w.cashCents < SNACKS_CART_PRICE_CENTS
+      !target ||
+      target.charityGivenToday ||
+      w.cashCents < HELPER_CHARITY_CENTS
     ) {
       return;
     }
 
-    w.cashCents -= SNACKS_CART_PRICE_CENTS;
-    w.hasSnacksCart = true;
-    s.inventory.samosaMix += 4;
-    s.inventory.pakoraMix += 4;
-    s.inventory.cookingOil += 8;
-    w.lastPlayedAt = Date.now();
-    w.activeShift = s;
-
-    cafeAudio.play('level_up');
-    setActiveWorld({ ...w });
-    setHudShift({ ...s });
-    setFeedbackBanner({
-      text: '2nd Snacks Readi Unlocked on Left Plaza (+4 Samosa, +4 Pakora, +8 Oil)!',
-      color: '#86EFAC',
-    });
-    feedbackTimerRef.current = 2.8;
-    persistWorld(w);
-  }, []);
-
-  const handleGiveHelperCharity = useCallback(() => {
-    const w = worldRef.current;
-    const s = shiftRef.current;
-    if (!w || !s) return;
-    if (s.helper.charityGivenToday || w.cashCents < HELPER_CHARITY_CENTS) {
-      return;
-    }
-
+    const updatedHelpers = helpers.map((h) =>
+      (h.id ?? 'chotu') === helperId ? { ...h, charityGivenToday: true } : h
+    );
     const nextShift: ShiftSnapshot = {
       ...s,
-      helper: {
-        ...s.helper,
-        charityGivenToday: true,
-      },
+      helpers: updatedHelpers,
+      helper: updatedHelpers[0],
       customers: s.customers.map((c) =>
         c.status === 'waiting'
           ? { ...c, patience: Math.min(c.maxPatience, c.patience + 15) }
@@ -386,39 +393,67 @@ export default function RushHourCafeApp() {
     worldRef.current = nextWorld;
     shiftRef.current = nextShift;
 
+    const cfg = HELPER_NPCS[helperId];
     cafeAudio.play('buy');
-    setShowHelperModal(false);
+    setActiveHelperId(null);
     setActiveWorld(nextWorld);
     setHudShift(nextShift);
     setFeedbackBanner({
-      text: `Gave ${formatMoney(HELPER_CHARITY_CENTS)} to Chotu — customer patience boosted!`,
+      text: `Gave ${formatMoney(HELPER_CHARITY_CENTS)} to ${cfg.name} — customer patience boosted!`,
       color: '#FDE68A',
     });
     feedbackTimerRef.current = 2.2;
     persistWorld(nextWorld);
   }, []);
 
-  const handleHireHelper = useCallback(() => {
+  const handleHireHelper = useCallback((helperId: HelperNpcId) => {
     const w = worldRef.current;
     const s = shiftRef.current;
     if (!w || !s) return;
 
-    s.helper.status = 'hired';
-    s.helper.task = 'idle';
-    s.helper.statusNote = 'Ready to Help';
-    w.lastPlayedAt = Date.now();
-    w.activeShift = s;
+    const cfg = HELPER_NPCS[helperId];
+    if (cfg.requiresSnacksCart && !w.hasSnacksCart) {
+      return;
+    }
+
+    const helpers = getShiftHelpers(s);
+    const updatedHelpers = helpers.map((h) =>
+      (h.id ?? 'chotu') === helperId
+        ? {
+            ...h,
+            status: 'hired' as const,
+            task: 'idle' as const,
+            statusNote: 'Ready to Help',
+          }
+        : h
+    );
+    const nextShift: ShiftSnapshot = {
+      ...s,
+      helpers: updatedHelpers,
+      helper: updatedHelpers[0],
+    };
+    const nextWorld: WorldSave = {
+      ...w,
+      lastPlayedAt: Date.now(),
+      activeShift: nextShift,
+    };
+
+    worldRef.current = nextWorld;
+    shiftRef.current = nextShift;
 
     cafeAudio.play('level_up');
-    setShowHelperModal(false);
-    setActiveWorld({ ...w });
-    setHudShift({ ...s });
+    setActiveHelperId(null);
+    setActiveWorld(nextWorld);
+    setHudShift(nextShift);
     setFeedbackBanner({
-      text: 'Chotu hired for today! He will make & serve Chai, Doodh Patti & Coffee!',
+      text:
+        helperId === 'munni'
+          ? 'Munni hired for 1 day at your 2nd Samosa Readi (20% wage per serve)!'
+          : `${cfg.name} hired for today! Will serve Chai, Coffee, Biscuits, Cupcakes, Samosa & Pakora!`,
       color: '#86EFAC',
     });
     feedbackTimerRef.current = 2.6;
-    persistWorld(w);
+    persistWorld(nextWorld);
   }, []);
 
   const handleRentOrPayBuilding = useCallback((id: ShopBuildingId) => {
@@ -428,43 +463,499 @@ export default function RushHourCafeApp() {
     const cfg = RENTABLE_BUILDINGS.find((b) => b.id === id);
     if (!cfg || w.cashCents < cfg.weeklyRentCents) return;
 
-    w.cashCents -= cfg.weeklyRentCents;
     const existing = w.rentedShops.find((r) => r.buildingId === id);
-    if (existing) {
-      w.rentedShops = w.rentedShops.map((r) =>
-        r.buildingId === id
-          ? {
-              ...r,
-              nextRentDueDay: Math.max(w.day, r.nextRentDueDay) + SHOP_WEEK_DAYS,
-              weeksPaid: r.weeksPaid + 1,
-            }
-          : r
-      );
-    } else {
-      w.rentedShops = [
-        ...w.rentedShops,
-        {
-          buildingId: id,
-          rentedOnDay: w.day,
-          nextRentDueDay: w.day + SHOP_WEEK_DAYS,
-          weeksPaid: 1,
-        },
-      ];
-    }
+    const nextRentedShops = existing
+      ? w.rentedShops.map((r) =>
+          r.buildingId === id
+            ? {
+                ...r,
+                nextRentDueDay:
+                  Math.max(w.day, r.nextRentDueDay) + SHOP_WEEK_DAYS,
+                weeksPaid: r.weeksPaid + 1,
+              }
+            : r
+        )
+      : [
+          ...w.rentedShops,
+          {
+            buildingId: id,
+            rentedOnDay: w.day,
+            nextRentDueDay: w.day + SHOP_WEEK_DAYS,
+            weeksPaid: 1,
+          },
+        ];
 
-    w.lastPlayedAt = Date.now();
-    if (s) w.activeShift = s;
+    const nextWorld: WorldSave = {
+      ...w,
+      cashCents: w.cashCents - cfg.weeklyRentCents,
+      rentedShops: nextRentedShops,
+      lastPlayedAt: Date.now(),
+      activeShift: s ?? w.activeShift,
+    };
+    worldRef.current = nextWorld;
 
     cafeAudio.play('level_up');
     setBuildingOwnerId(null);
-    setActiveWorld({ ...w });
+    setActiveWorld(nextWorld);
     setFeedbackBanner({
-      text: `${existing ? 'Paid weekly rent' : 'Rented'} ${cfg.shopName} (+${formatMoney(cfg.dailyIncomeBonusCents)}/day profit)!`,
+      text: existing
+        ? `Paid weekly rent for ${cfg.shopName}!`
+        : `Rented empty ${cfg.shopName}! Order a Shop Kitchen, Chairs & Tables at Wood Master!`,
       color: '#C4B5FD',
     });
+    feedbackTimerRef.current = 2.8;
+    persistWorld(nextWorld);
+  }, []);
+
+  const handlePlaceWoodOrder = useCallback(
+    (kind: WoodOrderKind, targetShopId?: ShopBuildingId) => {
+      const w = worldRef.current;
+      const s = shiftRef.current;
+      if (!w || !s) return;
+      const cat = WOOD_MASTER_CATALOG.find((c) => c.kind === kind);
+      if (!cat || w.cashCents < cat.priceCents) return;
+
+      const existingOrders = w.woodOrders ?? [];
+      if (kind === 'shop_kitchen') {
+        if (!targetShopId) return;
+        const alreadyInstalled = (w.shopKitchens ?? []).includes(targetShopId);
+        const alreadyOrdered = existingOrders.some(
+          (o) => o.kind === 'shop_kitchen' && o.targetShopId === targetShopId
+        );
+        if (alreadyInstalled || alreadyOrdered) return;
+      } else if (kind === 'snacks_cart') {
+        const hasRecipe =
+          w.unlockedRecipes.includes('samosa') ||
+          w.unlockedRecipes.includes('pakora');
+        if (
+          !hasRecipe ||
+          w.hasSnacksCart ||
+          existingOrders.some((o) => o.kind === 'snacks_cart')
+        ) {
+          return;
+        }
+      } else if (kind === 'chai_stall') {
+        if (
+          w.hasTeaStall !== false ||
+          existingOrders.some((o) => o.kind === 'chai_stall')
+        ) {
+          return;
+        }
+      }
+
+      const newOrder: WoodMasterOrder = {
+        id: `wo_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        kind,
+        label: cat.name,
+        priceCents: cat.priceCents,
+        durationSec: cat.durationSec,
+        remainingSec: cat.durationSec,
+        status: 'building',
+        targetShopId,
+        notified: false,
+      };
+
+      const nextWorld: WorldSave = {
+        ...w,
+        cashCents: w.cashCents - cat.priceCents,
+        woodOrders: [...existingOrders, newOrder],
+        lastPlayedAt: Date.now(),
+        activeShift: s,
+      };
+      worldRef.current = nextWorld;
+
+      cafeAudio.play('buy');
+      setActiveWorld(nextWorld);
+      setFeedbackBanner({
+        text: `Ordered ${cat.name}! Ustad Karim will finish it in ${cat.durationSec}s.`,
+        color: '#FDE68A',
+      });
+      feedbackTimerRef.current = 2.4;
+      persistWorld(nextWorld);
+    },
+    []
+  );
+
+  const handleReceiveWoodOrder = useCallback((orderId: string) => {
+    const w = worldRef.current;
+    const s = shiftRef.current;
+    if (!w || !s) return;
+    const existingOrders = w.woodOrders ?? [];
+    const order = existingOrders.find(
+      (o) => o.id === orderId && o.status === 'ready'
+    );
+    if (!order) return;
+
+    const remainingOrders = existingOrders.filter((o) => o.id !== orderId);
+    const nextWorld: WorldSave = {
+      ...w,
+      woodOrders: remainingOrders,
+      lastPlayedAt: Date.now(),
+    };
+    let nextShift: ShiftSnapshot = { ...s };
+    let bannerText = `Received ${order.label}!`;
+    let closeWorkshop = false;
+
+    if (order.kind === 'chair' || order.kind === 'table') {
+      const carriedItem =
+        order.kind === 'chair' ? 'carried_chair' : 'carried_table';
+      const label = order.kind === 'chair' ? 'Chair' : 'Table';
+      const preferP2 =
+        woodMasterActor === 'p2' && Boolean(nextShift.player2?.active);
+      if (preferP2 && nextShift.player2 && nextShift.player2.holding === null) {
+        nextShift = {
+          ...nextShift,
+          player2: { ...nextShift.player2, holding: carriedItem },
+        };
+        bannerText = `Partner P2 picked up crafted ${label}!`;
+        closeWorkshop = true;
+      } else if (!preferP2 && nextShift.player.holding === null) {
+        nextShift = {
+          ...nextShift,
+          player: { ...nextShift.player, holding: carriedItem },
+        };
+        bannerText = `Picked up crafted ${label}! Place anywhere with E`;
+        closeWorkshop = true;
+      } else if (
+        preferP2 &&
+        nextShift.player.holding === null
+      ) {
+        nextShift = {
+          ...nextShift,
+          player: { ...nextShift.player, holding: carriedItem },
+        };
+        bannerText = `P1 picked up crafted ${label}! Place anywhere with E`;
+        closeWorkshop = true;
+      } else if (
+        nextShift.player2?.active &&
+        nextShift.player2.holding === null
+      ) {
+        nextShift = {
+          ...nextShift,
+          player2: { ...nextShift.player2, holding: carriedItem },
+        };
+        bannerText = `Partner P2 picked up crafted ${label}!`;
+        closeWorkshop = true;
+      } else {
+        nextWorld.pendingFurniture = [...w.pendingFurniture, order.kind];
+        bannerText = `${label} placed on Pickup Pad outside Wood Master (E)!`;
+      }
+    } else if (order.kind === 'shop_kitchen' && order.targetShopId) {
+      const prevKitchens = w.shopKitchens ?? [];
+      if (!prevKitchens.includes(order.targetShopId)) {
+        nextWorld.shopKitchens = [...prevKitchens, order.targetShopId];
+      }
+      const shopName =
+        RENTABLE_BUILDINGS.find((b) => b.id === order.targetShopId)?.shopName ??
+        order.targetShopId;
+      bannerText = `Shop Kitchen installed inside ${shopName}!`;
+      closeWorkshop = true;
+    } else if (order.kind === 'snacks_cart') {
+      nextWorld.hasSnacksCart = true;
+      nextShift = {
+        ...nextShift,
+        inventory: {
+          ...nextShift.inventory,
+          samosaMix: nextShift.inventory.samosaMix + 4,
+          pakoraMix: nextShift.inventory.pakoraMix + 4,
+          cookingOil: nextShift.inventory.cookingOil + 8,
+        },
+      };
+      bannerText =
+        '2nd Snacks Readi set up on Left Plaza (+4 Samosa, +4 Pakora, +8 Oil)!';
+      closeWorkshop = true;
+    } else if (order.kind === 'chai_stall') {
+      nextWorld.hasTeaStall = true;
+      bannerText = 'Main 4-Wheel Chai Readi restored on the street!';
+      closeWorkshop = true;
+    }
+
+    nextWorld.activeShift = nextShift;
+    worldRef.current = nextWorld;
+    shiftRef.current = nextShift;
+
+    cafeAudio.play('level_up');
+    if (closeWorkshop) setShowWoodMaster(false);
+    setActiveWorld(nextWorld);
+    setHudShift(nextShift);
+    setFeedbackBanner({
+      text: bannerText,
+      color: '#86EFAC',
+    });
     feedbackTimerRef.current = 2.6;
+    persistWorld(nextWorld);
+  }, [woodMasterActor]);
+
+  const handleToggleCoop = useCallback(() => {
+    const w = worldRef.current;
+    const s = shiftRef.current;
+    if (!w || !s) return;
+
+    const currentlyActive = Boolean(s.player2?.active);
+    let nextPending = w.pendingFurniture;
+
+    let nextP2 = s.player2 ?? {
+      x: s.player.x + 1.15,
+      z: s.player.z,
+      yaw: 0,
+      holding: null,
+      walkCycle: 0,
+      dashCooldown: 0,
+      dashTimer: 0,
+      isMoving: false,
+      sittingChairId: null,
+      active: false,
+    };
+
+    if (!currentlyActive) {
+      nextP2 = {
+        ...nextP2,
+        x: Math.min(51, Math.max(-28, s.player.x + 1.15)),
+        z: s.player.z,
+        yaw: s.player.yaw,
+        holding: null,
+        sittingChairId: null,
+        active: true,
+      };
+    } else {
+      if (nextP2.holding === 'carried_chair') {
+        nextPending = [...nextPending, 'chair'];
+      } else if (nextP2.holding === 'carried_table') {
+        nextPending = [...nextPending, 'table'];
+      }
+      nextP2 = {
+        ...nextP2,
+        holding: null,
+        sittingChairId: null,
+        active: false,
+      };
+    }
+
+    const nextShift: ShiftSnapshot = {
+      ...s,
+      player2: nextP2,
+    };
+    const nextWorld: WorldSave = {
+      ...w,
+      pendingFurniture: nextPending,
+      lastPlayedAt: Date.now(),
+      activeShift: nextShift,
+    };
+
+    worldRef.current = nextWorld;
+    shiftRef.current = nextShift;
+
+    cafeAudio.play(currentlyActive ? 'pickup' : 'level_up');
+    setShowCoopModal(false);
+    setActiveWorld(nextWorld);
+    setHudShift(nextShift);
+    setFeedbackBanner({
+      text: currentlyActive
+        ? '2-Player Co-Op disabled — switched to Solo Mode.'
+        : '2-Player Co-Op Enabled! P2 Partner uses Arrow Keys + Enter!',
+      color: '#5EEAD4',
+    });
+    feedbackTimerRef.current = 2.6;
+    persistWorld(nextWorld);
+  }, []);
+
+  const handleSellTeaStall = useCallback(() => {
+    const w = worldRef.current;
+    const s = shiftRef.current;
+    if (!w || !s) return;
+    if (
+      w.hasTeaStall === false ||
+      w.rentedShops.length === 0 ||
+      (w.shopKitchens ?? []).length === 0
+    ) {
+      return;
+    }
+
+    const payout = Math.round(CHAI_STALL_PRICE_CENTS * RESALE_RATE);
+    const updatedHelpers = getShiftHelpers(s).map((h) =>
+      h.status === 'hired'
+        ? {
+            ...h,
+            task: 'idle' as const,
+            holding: null,
+            targetCustomerId: null,
+            actionTimer: 0,
+          }
+        : h
+    );
+    const nextShift: ShiftSnapshot = {
+      ...s,
+      helpers: updatedHelpers,
+      helper: updatedHelpers[0],
+    };
+    const nextWorld: WorldSave = {
+      ...w,
+      cashCents: w.cashCents + payout,
+      hasTeaStall: false,
+      lastPlayedAt: Date.now(),
+      activeShift: nextShift,
+    };
+    worldRef.current = nextWorld;
+    shiftRef.current = nextShift;
+
+    cafeAudio.play('buy');
+    setActiveWorld(nextWorld);
+    setHudShift(nextShift);
+    setFeedbackBanner({
+      text: `Sold Chai Readi Stall for +${formatMoney(payout)} (-50%)! Cook in your built Shop Kitchen!`,
+      color: '#C4B5FD',
+    });
+    feedbackTimerRef.current = 2.8;
+    persistWorld(nextWorld);
+  }, []);
+
+  const handleSellSnacksCart = useCallback(() => {
+    const w = worldRef.current;
+    const s = shiftRef.current;
+    if (!w || !s || !w.hasSnacksCart) return;
+
+    const payout = Math.round(SNACKS_CART_PRICE_CENTS * RESALE_RATE);
+    w.cashCents += payout;
+    w.hasSnacksCart = false;
+    s.fryer = { status: 'idle', progress: 0, fryingSnack: null };
+    s.snackTrayItems = [null, null];
+    w.lastPlayedAt = Date.now();
+    w.activeShift = s;
+
+    cafeAudio.play('buy');
+    setActiveWorld({ ...w });
+    setHudShift({ ...s });
+    setFeedbackBanner({
+      text: `Sold 2nd Snacks Readi for +${formatMoney(payout)} (-50% rate)!`,
+      color: '#C4B5FD',
+    });
+    feedbackTimerRef.current = 2.4;
     persistWorld(w);
   }, []);
+
+  const handleSellFurniture = useCallback(
+    (kind: 'chair' | 'table', sellAll: boolean) => {
+      const w = worldRef.current;
+      const s = shiftRef.current;
+      if (!w || !s) return;
+
+      const carriedKind = kind === 'chair' ? 'carried_chair' : 'carried_table';
+      const unitPayout = Math.round(
+        (kind === 'chair' ? CHAIR_PRICE_CENTS : TABLE_PRICE_CENTS) * RESALE_RATE
+      );
+      const removedChairIds = new Set<string>();
+      let soldCount = 0;
+
+      if (sellAll) {
+        if (s.player.holding === carriedKind) {
+          s.player.holding = null;
+          soldCount += 1;
+        }
+        if (s.player2?.holding === carriedKind) {
+          s.player2.holding = null;
+          soldCount += 1;
+        }
+        const remainingPending = w.pendingFurniture.filter((k) => {
+          if (k === kind) {
+            soldCount += 1;
+            return false;
+          }
+          return true;
+        });
+        w.pendingFurniture = remainingPending;
+
+        w.furniture = w.furniture.filter((f) => {
+          if (f.kind === kind) {
+            if (kind === 'chair') removedChairIds.add(f.id);
+            soldCount += 1;
+            return false;
+          }
+          return true;
+        });
+      } else {
+        if (s.player.holding === carriedKind) {
+          s.player.holding = null;
+          soldCount = 1;
+        } else if (s.player2?.holding === carriedKind) {
+          s.player2.holding = null;
+          soldCount = 1;
+        } else {
+          const pIdx = w.pendingFurniture.lastIndexOf(kind);
+          if (pIdx !== -1) {
+            w.pendingFurniture = w.pendingFurniture.filter(
+              (_, i) => i !== pIdx
+            );
+            soldCount = 1;
+          } else {
+            const occupied = new Set<string>();
+            if (s.player.sittingChairId) occupied.add(s.player.sittingChairId);
+            if (s.player2?.sittingChairId)
+              occupied.add(s.player2.sittingChairId);
+            for (const c of s.customers) {
+              if (c.seatedChairId) occupied.add(c.seatedChairId);
+              if (c.targetChairId) occupied.add(c.targetChairId);
+            }
+            const candidate =
+              w.furniture.find((f) => f.kind === kind && !occupied.has(f.id)) ??
+              w.furniture.find((f) => f.kind === kind);
+            if (candidate) {
+              if (kind === 'chair') removedChairIds.add(candidate.id);
+              w.furniture = w.furniture.filter((f) => f.id !== candidate.id);
+              soldCount = 1;
+            }
+          }
+        }
+      }
+
+      if (soldCount === 0) return;
+
+      if (removedChairIds.size > 0) {
+        if (
+          s.player.sittingChairId &&
+          removedChairIds.has(s.player.sittingChairId)
+        ) {
+          s.player.sittingChairId = null;
+        }
+        if (
+          s.player2?.sittingChairId &&
+          removedChairIds.has(s.player2.sittingChairId)
+        ) {
+          s.player2.sittingChairId = null;
+        }
+        s.customers = s.customers.map((c) => {
+          const clearSeated =
+            typeof c.seatedChairId === 'string' &&
+            removedChairIds.has(c.seatedChairId);
+          const clearTarget =
+            typeof c.targetChairId === 'string' &&
+            removedChairIds.has(c.targetChairId);
+          if (!clearSeated && !clearTarget) return c;
+          return {
+            ...c,
+            seatedChairId: clearSeated ? null : c.seatedChairId,
+            targetChairId: clearTarget ? null : c.targetChairId,
+          };
+        });
+      }
+
+      const totalPayout = soldCount * unitPayout;
+      w.cashCents += totalPayout;
+      w.lastPlayedAt = Date.now();
+      w.activeShift = s;
+
+      const label = kind === 'chair' ? 'Chair' : 'Table';
+      cafeAudio.play('buy');
+      setActiveWorld({ ...w });
+      setHudShift({ ...s });
+      setFeedbackBanner({
+        text: `Sold ${soldCount} ${label}${soldCount > 1 ? 's' : ''} for +${formatMoney(totalPayout)} (-50%)!`,
+        color: '#C4B5FD',
+      });
+      feedbackTimerRef.current = 2.0;
+      persistWorld(w);
+    },
+    []
+  );
 
   const handleOfferAlternative = useCallback(
     (drink: DrinkType) => {
@@ -472,7 +963,8 @@ export default function RushHourCafeApp() {
       const s = shiftRef.current;
       if (!w || !s || !customerAction) return;
 
-      const accepted = Math.random() < 0.78;
+      const accepted =
+        customerAction.kind === 'beggar_kid' ? true : Math.random() < 0.8;
       const info = DRINK_CATALOG[drink] ?? DRINK_CATALOG.tea;
 
       if (customerAction.kind === 'customer') {
@@ -515,6 +1007,61 @@ export default function RushHourCafeApp() {
             });
           }
         }
+      } else if (customerAction.kind === 'owner_customer') {
+        const owner = s.supermarketOwner;
+        if (owner.phase === 'ordering_chai') {
+          if (accepted) {
+            owner.orderDrink = drink;
+            owner.patience = Math.min(owner.maxPatience, owner.patience + 22);
+            cafeAudio.play('pickup');
+            setFeedbackBanner({
+              text: `Mart Owner agreed to ${info.name}!`,
+              color: '#86EFAC',
+            });
+          } else {
+            owner.phase = 'returning_to_store';
+            cafeAudio.play('pickup');
+            setFeedbackBanner({
+              text: `Mart Owner declined ${info.name} and returned to store`,
+              color: '#FDE68A',
+            });
+          }
+        }
+      } else if (customerAction.kind === 'shop_visitor') {
+        const vis = getShiftShopVisitors(s).find(
+          (v) => v.id === customerAction.id
+        );
+        if (vis && vis.phase === 'ordering') {
+          if (accepted) {
+            vis.orderDrink = drink;
+            vis.patience = Math.min(vis.maxPatience, vis.patience + 22);
+            cafeAudio.play('pickup');
+            setFeedbackBanner({
+              text: `${vis.name} agreed to ${info.name}!`,
+              color: '#86EFAC',
+            });
+          } else {
+            vis.phase = 'returning_to_shop';
+            cafeAudio.play('pickup');
+            setFeedbackBanner({
+              text: `${vis.name} declined ${info.name} and headed back`,
+              color: '#FDE68A',
+            });
+          }
+        }
+      } else if (customerAction.kind === 'beggar_kid') {
+        const bk = getShiftBeggarKids(s).find(
+          (k) => k.id === customerAction.id
+        );
+        if (bk && bk.status === 'waiting') {
+          bk.orderDrink = drink;
+          bk.patience = Math.min(bk.maxPatience, bk.patience + 25);
+          cafeAudio.play('pickup');
+          setFeedbackBanner({
+            text: `Poor Kid happily agreed to free ${info.name}!`,
+            color: '#86EFAC',
+          });
+        }
       }
 
       feedbackTimerRef.current = 2.0;
@@ -531,6 +1078,7 @@ export default function RushHourCafeApp() {
     const s = shiftRef.current;
     if (!w || !s || !customerAction) return;
 
+    let msg = 'Politely told customer: Sold Out today';
     if (customerAction.kind === 'customer') {
       const cust = s.customers.find((c) => c.id === customerAction.id);
       if (cust && cust.status === 'waiting') {
@@ -539,12 +1087,32 @@ export default function RushHourCafeApp() {
     } else if (customerAction.kind === 'car') {
       if (s.carCustomer.phase === 'waiting') {
         s.carCustomer.phase = 'leaving';
+        msg = 'Rejected Car order — Car drove off';
+      }
+    } else if (customerAction.kind === 'owner_customer') {
+      if (s.supermarketOwner.phase === 'ordering_chai') {
+        s.supermarketOwner.phase = 'returning_to_store';
+        msg = 'Rejected Mart Owner order — he headed back to his store';
+      }
+    } else if (customerAction.kind === 'shop_visitor') {
+      const vis = getShiftShopVisitors(s).find(
+        (v) => v.id === customerAction.id
+      );
+      if (vis && vis.phase === 'ordering') {
+        vis.phase = 'returning_to_shop';
+        msg = `Rejected ${vis.name}'s order — headed back to shop`;
+      }
+    } else if (customerAction.kind === 'beggar_kid') {
+      const bk = getShiftBeggarKids(s).find((k) => k.id === customerAction.id);
+      if (bk && bk.status === 'waiting') {
+        bk.status = 'walking_out';
+        msg = 'Turned away Poor Kid politely';
       }
     }
 
     cafeAudio.play('pickup');
     setFeedbackBanner({
-      text: 'Politely told customer: Sold Out today',
+      text: msg,
       color: '#D6C7B5',
     });
     feedbackTimerRef.current = 1.8;
@@ -553,6 +1121,67 @@ export default function RushHourCafeApp() {
     w.activeShift = s;
     persistWorld(w);
   }, [customerAction]);
+
+  const handleToggleMenuItem = useCallback((drink: DrinkType) => {
+    const w = worldRef.current;
+    const s = shiftRef.current;
+    if (!w) return;
+
+    const isBaseDrink =
+      drink === 'tea' || drink === 'doodh_patti' || drink === 'coffee';
+    if (isBaseDrink && !w.unlockedRecipes.includes(drink)) return;
+    if (
+      (drink === 'samosa' || drink === 'pakora') &&
+      (!w.unlockedRecipes.includes(drink) || !w.hasSnacksCart)
+    ) {
+      return;
+    }
+
+    const currentlyEnabled = isMenuItemEnabled(w, drink);
+    if (currentlyEnabled && isBaseDrink) {
+      const otherEnabledDrink = (
+        ['tea', 'doodh_patti', 'coffee'] as const
+      ).some(
+        (d) =>
+          d !== drink &&
+          w.unlockedRecipes.includes(d) &&
+          isMenuItemEnabled(w, d)
+      );
+      if (!otherEnabledDrink) {
+        setFeedbackBanner({
+          text: 'Keep at least 1 drink enabled on your Sales Menu!',
+          color: '#FDE68A',
+        });
+        feedbackTimerRef.current = 1.8;
+        return;
+      }
+    }
+
+    const prevDisabled = w.disabledMenuItems ?? [];
+    const nextDisabled = currentlyEnabled
+      ? Array.from(new Set([...prevDisabled, drink]))
+      : prevDisabled.filter((d) => d !== drink);
+
+    const nextWorld: WorldSave = {
+      ...w,
+      disabledMenuItems: nextDisabled,
+      lastPlayedAt: Date.now(),
+      activeShift: s && s.phase === 'playing' ? s : w.activeShift,
+    };
+    worldRef.current = nextWorld;
+
+    const info = DRINK_CATALOG[drink] ?? DRINK_CATALOG.tea;
+    cafeAudio.play('pickup');
+    setActiveWorld(nextWorld);
+    setFeedbackBanner({
+      text: currentlyEnabled
+        ? `${info.name} disabled from Sales Menu`
+        : `${info.name} enabled for sale!`,
+      color: currentlyEnabled ? '#FDBA74' : '#86EFAC',
+    });
+    feedbackTimerRef.current = 1.8;
+    persistWorld(nextWorld);
+  }, []);
 
   const handleNextDay = useCallback(() => {
     const w = worldRef.current;
@@ -579,7 +1208,11 @@ export default function RushHourCafeApp() {
     setPaused(false);
     setShowSupermarket(false);
     setShowMilkmanShop(false);
-    setShowHelperModal(false);
+    setActiveHelperId(null);
+    setShowGearBuyer(false);
+    setShowWoodMaster(false);
+    setShowCoopModal(false);
+    setShowSalesMenu(false);
     setBuildingOwnerId(null);
     setCustomerAction(null);
     persistWorld(nextWorld);
@@ -594,7 +1227,11 @@ export default function RushHourCafeApp() {
     setPaused(false);
     setShowSupermarket(false);
     setShowMilkmanShop(false);
-    setShowHelperModal(false);
+    setActiveHelperId(null);
+    setShowGearBuyer(false);
+    setShowWoodMaster(false);
+    setShowCoopModal(false);
+    setShowSalesMenu(false);
     setBuildingOwnerId(null);
     setCustomerAction(null);
     await refreshWorldList();
@@ -615,6 +1252,20 @@ export default function RushHourCafeApp() {
         e.preventDefault();
         pausedRef.current = true;
         setPaused(true);
+        return;
+      }
+
+      if (e.code === 'KeyM') {
+        if (e.repeat) return;
+        e.preventDefault();
+        setShowSalesMenu(true);
+        return;
+      }
+
+      if (e.code === 'KeyP') {
+        if (e.repeat) return;
+        e.preventDefault();
+        setShowCoopModal(true);
         return;
       }
 
@@ -670,47 +1321,75 @@ export default function RushHourCafeApp() {
         if (!modalOpenRef.current && shift.phase === 'playing') {
           const held = heldKeysRef.current;
           const just = justPressedKeysRef.current;
+          const coopActive = Boolean(shift.player2?.active);
 
-          let dx = 0;
-          let dz = 0;
-          if (held.has('KeyW') || held.has('ArrowUp')) dz -= 1;
-          if (held.has('KeyS') || held.has('ArrowDown')) dz += 1;
-          if (held.has('KeyA') || held.has('ArrowLeft')) dx -= 1;
-          if (held.has('KeyD') || held.has('ArrowRight')) dx += 1;
+          let dx1 = 0;
+          let dz1 = 0;
+          if (held.has('KeyW') || (!coopActive && held.has('ArrowUp'))) dz1 -= 1;
+          if (held.has('KeyS') || (!coopActive && held.has('ArrowDown'))) dz1 += 1;
+          if (held.has('KeyA') || (!coopActive && held.has('ArrowLeft'))) dx1 -= 1;
+          if (held.has('KeyD') || (!coopActive && held.has('ArrowRight'))) dx1 += 1;
 
           if (
             Math.abs(touchInputRef.current.dx) > 0.1 ||
             Math.abs(touchInputRef.current.dz) > 0.1
           ) {
-            dx += touchInputRef.current.dx;
-            dz += touchInputRef.current.dz;
+            dx1 += touchInputRef.current.dx;
+            dz1 += touchInputRef.current.dz;
           }
 
-          const input: Stage1Input = {
-            dx,
-            dz,
+          const input1: Stage1Input = {
+            dx: dx1,
+            dz: dz1,
             interactJustPressed:
               just.has('KeyE') ||
               just.has('Space') ||
-              just.has('Enter') ||
+              (!coopActive && just.has('Enter')) ||
               touchInputRef.current.interactJust,
             offerRejectJustPressed:
               just.has('KeyF') ||
-              just.has('KeyX') ||
+              (!coopActive && just.has('KeyX')) ||
               touchInputRef.current.offerRejectJust,
             dashJustPressed:
               just.has('KeyQ') ||
               just.has('ShiftLeft') ||
-              just.has('ShiftRight') ||
+              (!coopActive && just.has('ShiftRight')) ||
               touchInputRef.current.dashJust,
           };
+
+          let input2: Stage1Input | undefined;
+          if (coopActive) {
+            let dx2 = 0;
+            let dz2 = 0;
+            if (held.has('ArrowUp')) dz2 -= 1;
+            if (held.has('ArrowDown')) dz2 += 1;
+            if (held.has('ArrowLeft')) dx2 -= 1;
+            if (held.has('ArrowRight')) dx2 += 1;
+            input2 = {
+              dx: dx2,
+              dz: dz2,
+              interactJustPressed:
+                just.has('Enter') ||
+                just.has('NumpadEnter') ||
+                just.has('Slash'),
+              offerRejectJustPressed:
+                just.has('Period') || just.has('Backspace'),
+              dashJustPressed: just.has('ShiftRight') || just.has('Comma'),
+            };
+          }
 
           justPressedKeysRef.current.clear();
           touchInputRef.current.interactJust = false;
           touchInputRef.current.offerRejectJust = false;
           touchInputRef.current.dashJust = false;
 
-          const simEvents = stepStage1Simulation(shift, world, input, dt);
+          const simEvents = stepStage1Simulation(
+            shift,
+            world,
+            input1,
+            dt,
+            input2
+          );
 
           for (const snd of simEvents.sounds) {
             cafeAudio.play(snd);
@@ -723,10 +1402,17 @@ export default function RushHourCafeApp() {
             setShowMilkmanShop(true);
           }
           if (simEvents.openHelperModal) {
-            setShowHelperModal(true);
+            setActiveHelperId(simEvents.openHelperId ?? 'chotu');
           }
           if (simEvents.openBuildingOwnerId) {
             setBuildingOwnerId(simEvents.openBuildingOwnerId);
+          }
+          if (simEvents.openGearBuyer) {
+            setShowGearBuyer(true);
+          }
+          if (simEvents.openWoodMaster) {
+            setWoodMasterActor(simEvents.openModalActor ?? 'p1');
+            setShowWoodMaster(true);
           }
           if (simEvents.openCustomerAction) {
             setCustomerAction(simEvents.openCustomerAction);
@@ -743,7 +1429,7 @@ export default function RushHourCafeApp() {
               text: simEvents.feedbackText,
               color: simEvents.feedbackColor,
             });
-            feedbackTimerRef.current = 1.65;
+            feedbackTimerRef.current = 2.0;
           }
 
           if (shift.milkman.phase !== 'parked' && showMilkmanShopRef.current) {
@@ -787,6 +1473,9 @@ export default function RushHourCafeApp() {
         }
 
         const currentTarget = findInteractTarget(shift, world);
+        const p2Target = shift.player2?.active
+          ? findInteractTargetForPlayer(shift.player2, shift, world)
+          : null;
         const labels = controller.syncAndRender(
           shift,
           world,
@@ -808,6 +1497,7 @@ export default function RushHourCafeApp() {
           setHudShift({ ...shift });
           setGuidedHint(getGuidedHint(shift, world));
           setTargetPrompt(currentTarget?.prompt || null);
+          setP2TargetPrompt(p2Target?.prompt || null);
         }
       }
 
@@ -821,6 +1511,13 @@ export default function RushHourCafeApp() {
       controller.dispose();
     };
   }, [screen]);
+
+  const activeSittingHelper =
+    activeHelperId && hudShift
+      ? getShiftHelpers(hudShift).find(
+          (h) => (h.id ?? 'chotu') === activeHelperId && h.status === 'sitting'
+        ) ?? null
+      : null;
 
   return (
     <main className="fixed inset-0 w-screen h-screen overflow-hidden bg-[#1B1410]">
@@ -861,6 +1558,7 @@ export default function RushHourCafeApp() {
             projectedLabels={projectedLabels}
             guidedHint={guidedHint}
             targetPrompt={targetPrompt}
+            p2TargetPrompt={p2TargetPrompt}
             feedbackBanner={feedbackBanner}
             muted={muted}
             saveLabel={saveLabel}
@@ -870,6 +1568,8 @@ export default function RushHourCafeApp() {
               setPaused(true);
             }}
             onQuickSave={() => saveCurrentWorld(false)}
+            onOpenSalesMenu={() => setShowSalesMenu(true)}
+            onOpenCoop={() => setShowCoopModal(true)}
           />
 
           {isMobile &&
@@ -877,7 +1577,11 @@ export default function RushHourCafeApp() {
             !paused &&
             !showSupermarket &&
             !showMilkmanShop &&
-            !showHelperModal &&
+            !activeHelperId &&
+            !showGearBuyer &&
+            !showWoodMaster &&
+            !showCoopModal &&
+            !showSalesMenu &&
             !buildingOwnerId &&
             !customerAction && (
               <div className="fixed bottom-16 inset-x-4 z-30 flex items-end justify-between pointer-events-none">
@@ -957,7 +1661,6 @@ export default function RushHourCafeApp() {
               inventory={hudShift.inventory}
               onBuyItem={handleBuyFromSupermarket}
               onBuyRecipe={handleBuyRecipe}
-              onBuySnacksCart={handleBuySnacksCart}
               onClose={() => setShowSupermarket(false)}
             />
           )}
@@ -972,13 +1675,14 @@ export default function RushHourCafeApp() {
             />
           )}
 
-          {showHelperModal && hudShift.helper.status === 'sitting' && (
+          {activeSittingHelper && (
             <KidHelperModal
               cashCents={activeWorld.cashCents}
-              helper={hudShift.helper}
+              helper={activeSittingHelper}
+              hasSnacksCart={activeWorld.hasSnacksCart}
               onGiveCharity={handleGiveHelperCharity}
               onHireHelper={handleHireHelper}
-              onClose={() => setShowHelperModal(false)}
+              onClose={() => setActiveHelperId(null)}
             />
           )}
 
@@ -991,30 +1695,93 @@ export default function RushHourCafeApp() {
             />
           )}
 
+          {showGearBuyer && (
+            <GearBuyerModal
+              world={activeWorld}
+              holding={hudShift.player.holding}
+              p2Holding={
+                hudShift.player2?.active ? hudShift.player2.holding : null
+              }
+              onSellTeaStall={handleSellTeaStall}
+              onSellSnacksCart={handleSellSnacksCart}
+              onSellFurniture={handleSellFurniture}
+              onClose={() => setShowGearBuyer(false)}
+            />
+          )}
+
+          {showWoodMaster && (
+            <WoodMasterModal
+              world={activeWorld}
+              holding={
+                woodMasterActor === 'p2' && hudShift.player2?.active
+                  ? hudShift.player2.holding
+                  : hudShift.player.holding
+              }
+              onPlaceOrder={handlePlaceWoodOrder}
+              onReceiveOrder={handleReceiveWoodOrder}
+              onClose={() => setShowWoodMaster(false)}
+            />
+          )}
+
+          {showCoopModal && (
+            <CoopInviteModal
+              coopActive={Boolean(hudShift.player2?.active)}
+              p1Holding={hudShift.player.holding}
+              p2Holding={hudShift.player2?.holding ?? null}
+              onToggleCoop={handleToggleCoop}
+              onClose={() => setShowCoopModal(false)}
+            />
+          )}
+
           {customerAction && (
             <CustomerActionModal
               targetKind={customerAction.kind}
               requestedDrink={customerAction.requestedDrink}
+              npcLabel={customerAction.npcLabel}
+              isFreeHelp={customerAction.isFreeHelp}
               availableChoices={getAvailableMenuChoices(activeWorld, hudShift)}
-              holding={hudShift.player.holding}
+              holding={
+                customerAction.actorId === 'p2' && hudShift.player2?.active
+                  ? hudShift.player2.holding
+                  : hudShift.player.holding
+              }
               onOfferAlternative={handleOfferAlternative}
               onReject={handleRejectCustomer}
               onClose={() => setCustomerAction(null)}
             />
           )}
 
+          {showSalesMenu && (
+            <SalesMenuModal
+              world={activeWorld}
+              shift={hudShift}
+              onToggleItem={handleToggleMenuItem}
+              onClose={() => setShowSalesMenu(false)}
+            />
+          )}
+
           {paused &&
             !showSupermarket &&
             !showMilkmanShop &&
-            !showHelperModal &&
+            !activeHelperId &&
+            !showGearBuyer &&
+            !showWoodMaster &&
+            !showCoopModal &&
+            !showSalesMenu &&
             !buildingOwnerId &&
             !customerAction &&
             hudShift.phase === 'playing' && (
               <PauseModal
                 world={activeWorld}
+                coopActive={Boolean(hudShift.player2?.active)}
                 onResume={() => {
                   pausedRef.current = false;
                   setPaused(false);
+                }}
+                onOpenCoop={() => {
+                  pausedRef.current = false;
+                  setPaused(false);
+                  setShowCoopModal(true);
                 }}
                 onSaveNow={() => saveCurrentWorld(false)}
                 onSaveAndExit={handleSaveAndExit}

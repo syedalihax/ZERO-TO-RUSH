@@ -1,6 +1,8 @@
 import {
+  COLD_CUSTOMER_SLOTS,
   CUSTOMER_SLOTS,
-  KID_SIT_POS,
+  HELPER_NPCS,
+  HELPER_NPC_IDS,
   SNACK_CUSTOMER_SLOTS,
   STARTING_CASH_CENTS,
   STARTING_WATER,
@@ -10,8 +12,13 @@ import type {
   DrinkType,
   FurnitureKind,
   HelperKidState,
+  HelperNpcId,
+  Player2State,
   RentedShopRecord,
   ShiftSnapshot,
+  ShopBuildingId,
+  WoodMasterOrder,
+  WoodOrderKind,
   WorldSave,
 } from './types.ts';
 
@@ -25,6 +32,8 @@ const VALID_DRINKS = new Set<DrinkType>([
   'cupcake',
   'samosa',
   'pakora',
+  'cold_drink',
+  'ice_cream',
 ]);
 
 function sanitizeDrink(val: unknown): DrinkType {
@@ -33,10 +42,16 @@ function sanitizeDrink(val: unknown): DrinkType {
     : 'tea';
 }
 
-export function createDefaultHelperState(): HelperKidState {
+export function createDefaultHelperState(
+  id: HelperNpcId = 'chotu'
+): HelperKidState {
+  const cfg = HELPER_NPCS[id];
   return {
-    x: KID_SIT_POS.x,
-    z: KID_SIT_POS.z,
+    id,
+    name: cfg.name,
+    role: cfg.role,
+    x: cfg.sitPos.x,
+    z: cfg.sitPos.z,
     yaw: Math.PI,
     walkCycle: 0,
     status: 'sitting',
@@ -83,13 +98,30 @@ function normalizeShift(rawShift: unknown): ShiftSnapshot | null {
       typeof s.inventory.pakoraMix === 'number' ? s.inventory.pakoraMix : 0,
     cookingOil:
       typeof s.inventory.cookingOil === 'number' ? s.inventory.cookingOil : 0,
+    iceBlocks:
+      typeof s.inventory.iceBlocks === 'number' ? s.inventory.iceBlocks : 0,
+    coldDrinkBottles:
+      typeof s.inventory.coldDrinkBottles === 'number'
+        ? s.inventory.coldDrinkBottles
+        : 0,
+    iceCreamMix:
+      typeof s.inventory.iceCreamMix === 'number' ? s.inventory.iceCreamMix : 0,
+    iceCreamCones:
+      typeof s.inventory.iceCreamCones === 'number'
+        ? s.inventory.iceCreamCones
+        : 0,
   };
 
   const normalizedCustomers = Array.isArray(s.customers)
     ? s.customers.map((c) => {
         const orderDrink = sanitizeDrink(c.orderDrink);
         const isFried = orderDrink === 'samosa' || orderDrink === 'pakora';
-        const pool = isFried ? SNACK_CUSTOMER_SLOTS : CUSTOMER_SLOTS;
+        const isCold = orderDrink === 'cold_drink' || orderDrink === 'ice_cream';
+        const pool = isFried
+          ? SNACK_CUSTOMER_SLOTS
+          : isCold
+            ? COLD_CUSTOMER_SLOTS
+            : CUSTOMER_SLOTS;
         const slot =
           pool[Math.max(0, Math.min(pool.length - 1, c.slotIndex ?? 0))];
         const migratedTargetZ =
@@ -134,15 +166,57 @@ function normalizeShift(rawShift: unknown): ShiftSnapshot | null {
     idx < rawSnackTrayList.length ? (rawSnackTrayList[idx] ?? null) : null
   );
 
-  const rawHelper = s.helper as Partial<HelperKidState> | undefined;
-  const defHelper = createDefaultHelperState();
-  const helper: HelperKidState = rawHelper
-    ? {
-        ...defHelper,
-        ...rawHelper,
-        status: rawHelper.status === 'hired' ? 'hired' : 'sitting',
-      }
-    : defHelper;
+  const rawColdTrayList = Array.isArray(s.coldTrayItems)
+    ? s.coldTrayItems
+    : [];
+  const coldTrayItems = [0, 1].map((idx) =>
+    idx < rawColdTrayList.length ? (rawColdTrayList[idx] ?? null) : null
+  );
+
+  const rawHelpers = Array.isArray(s.helpers) ? s.helpers : [];
+  const helpers: HelperKidState[] = HELPER_NPC_IDS.map((id, idx) => {
+    const defHelper = createDefaultHelperState(id);
+    const match =
+      rawHelpers.find((h) => h && h.id === id) ??
+      (id === 'chotu' ? (s.helper as Partial<HelperKidState> | undefined) : rawHelpers[idx]);
+    if (!match || typeof match !== 'object') return defHelper;
+    return {
+      ...defHelper,
+      ...match,
+      id,
+      name: HELPER_NPCS[id].name,
+      role: HELPER_NPCS[id].role,
+      status: match.status === 'hired' ? 'hired' : 'sitting',
+    };
+  });
+  const helper = helpers[0];
+
+  const player2: Player2State =
+    s.player2 && typeof s.player2 === 'object'
+      ? {
+          x: typeof s.player2.x === 'number' ? s.player2.x : -0.75,
+          z: typeof s.player2.z === 'number' ? s.player2.z : -2.45,
+          yaw: typeof s.player2.yaw === 'number' ? s.player2.yaw : 0,
+          holding: s.player2.holding ?? null,
+          walkCycle: typeof s.player2.walkCycle === 'number' ? s.player2.walkCycle : 0,
+          dashCooldown: 0,
+          dashTimer: 0,
+          isMoving: false,
+          sittingChairId: s.player2.sittingChairId ?? null,
+          active: Boolean(s.player2.active),
+        }
+      : {
+          x: -0.75,
+          z: -2.45,
+          yaw: 0,
+          holding: null,
+          walkCycle: 0,
+          dashCooldown: 0,
+          dashTimer: 0,
+          isMoving: false,
+          sittingChairId: null,
+          active: false,
+        };
 
   return {
     ...(s as ShiftSnapshot),
@@ -150,25 +224,31 @@ function normalizeShift(rawShift: unknown): ShiftSnapshot | null {
       ...s.player,
       sittingChairId: s.player.sittingChairId ?? null,
     },
+    player2,
     carCustomer: {
       ...s.carCustomer,
       orderDrink: sanitizeDrink(s.carCustomer.orderDrink),
     },
-    supermarketOwner: s.supermarketOwner ?? {
-      x: 6.2,
-      z: -7.8,
-      yaw: 0,
-      phase: 'patrol_inside',
-      targetX: 9.8,
-      targetZ: -6.1,
-      waitTimer: 3.5,
-      nextVisitTimer: 48,
-      orderDrink: 'tea',
-      patience: 115,
-      maxPatience: 115,
-      drinkTimer: 0,
-      walkCycle: 0,
-    },
+    supermarketOwner: s.supermarketOwner
+      ? {
+          ...s.supermarketOwner,
+          orderDrink: sanitizeDrink(s.supermarketOwner.orderDrink),
+        }
+      : {
+          x: 6.2,
+          z: -7.8,
+          yaw: 0,
+          phase: 'patrol_inside',
+          targetX: 9.8,
+          targetZ: -6.1,
+          waitTimer: 3.5,
+          nextVisitTimer: 48,
+          orderDrink: 'tea',
+          patience: 115,
+          maxPatience: 115,
+          drinkTimer: 0,
+          walkCycle: 0,
+        },
     kettle: s.kettle
       ? {
           ...s.kettle,
@@ -190,7 +270,23 @@ function normalizeShift(rawShift: unknown): ShiftSnapshot | null {
               : null,
         }
       : { status: 'idle', progress: 0, fryingSnack: null },
+    chiller: s.chiller
+      ? {
+          status:
+            s.chiller.status === 'chilling' || s.chiller.status === 'ready'
+              ? s.chiller.status
+              : 'idle',
+          progress:
+            typeof s.chiller.progress === 'number' ? s.chiller.progress : 0,
+          chillingItem:
+            s.chiller.chillingItem === 'cold_drink' ||
+            s.chiller.chillingItem === 'ice_cream'
+              ? s.chiller.chillingItem
+              : null,
+        }
+      : { status: 'idle', progress: 0, chillingItem: null },
     helper,
+    helpers,
     customers: normalizedCustomers,
     pedestrians: Array.isArray(s.pedestrians) ? s.pedestrians : [],
     pedestrianSpawnTimer:
@@ -198,6 +294,7 @@ function normalizeShift(rawShift: unknown): ShiftSnapshot | null {
     trayItem: trayItems[0] ?? null,
     trayItems,
     snackTrayItems,
+    coldTrayItems,
     inventory: inv,
   };
 }
@@ -246,6 +343,48 @@ function normalizeWorld(
       )
     : [];
 
+  const disabledMenuItems: DrinkType[] = Array.isArray(raw.disabledMenuItems)
+    ? Array.from(
+        new Set(
+          raw.disabledMenuItems.filter((d): d is DrinkType =>
+            VALID_DRINKS.has(d as DrinkType)
+          )
+        )
+      )
+    : [];
+
+  const shopKitchens: ShopBuildingId[] = Array.isArray(raw.shopKitchens)
+    ? Array.from(
+        new Set(
+          raw.shopKitchens.filter(
+            (id): id is ShopBuildingId =>
+              id === 'west_shop' || id === 'center_shop' || id === 'east_shop'
+          )
+        )
+      )
+    : [];
+
+  const validOrderKinds = new Set<WoodOrderKind>([
+    'chair',
+    'table',
+    'shop_kitchen',
+    'snacks_cart',
+    'cold_cart',
+    'chai_stall',
+  ]);
+  const woodOrders: WoodMasterOrder[] = Array.isArray(raw.woodOrders)
+    ? raw.woodOrders.filter(
+        (o): o is WoodMasterOrder =>
+          Boolean(
+            o &&
+              o.id &&
+              validOrderKinds.has(o.kind) &&
+              typeof o.durationSec === 'number' &&
+              typeof o.remainingSec === 'number'
+          )
+      )
+    : [];
+
   return {
     id: raw.id,
     name: raw.name,
@@ -260,8 +399,13 @@ function normalizeWorld(
         : STARTING_CASH_CENTS,
     totalServed: typeof raw.totalServed === 'number' ? raw.totalServed : 0,
     unlockedRecipes: recipes,
+    disabledMenuItems,
+    hasTeaStall: raw.hasTeaStall !== false,
     hasSnacksCart: Boolean(raw.hasSnacksCart),
+    hasColdCart: Boolean(raw.hasColdCart),
     rentedShops,
+    shopKitchens,
+    woodOrders,
     furniture,
     pendingFurniture,
     activeShift: normalizeShift(raw.activeShift),

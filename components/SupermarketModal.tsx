@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Armchair,
   BookOpen,
   CheckCircle2,
   ChevronRight,
   Cookie,
+  Hammer,
   Lock,
   ShoppingBag,
   Store,
@@ -16,7 +16,6 @@ import { useMenuKeyboard } from '@/hooks/use-menu-keyboard';
 import {
   DRINK_CATALOG,
   LEVEL2_SERVED_THRESHOLD,
-  SNACKS_CART_PRICE_CENTS,
   SUPERMARKET_CATALOG,
   formatMoney,
 } from '@/lib/game/constants';
@@ -31,21 +30,25 @@ interface SupermarketModalProps {
   inventory: InventoryState;
   onBuyItem: (itemId: string) => void;
   onBuyRecipe: (drink: DrinkType) => void;
-  onBuySnacksCart: () => void;
   onClose: () => void;
 }
 
-type SupermarketTab = 'supplies' | 'snacks' | 'furniture' | 'recipes';
+type SupermarketTab = 'supplies' | 'snacks' | 'recipes';
 
-const DRINK_ORDER: DrinkType[] = ['tea', 'doodh_patti', 'coffee', 'samosa'];
-const TABS: SupermarketTab[] = ['supplies', 'snacks', 'furniture', 'recipes'];
+const DRINK_ORDER: DrinkType[] = [
+  'tea',
+  'doodh_patti',
+  'coffee',
+  'samosa',
+  'cold_drink',
+];
+const TABS: SupermarketTab[] = ['supplies', 'snacks', 'recipes'];
 
 export default function SupermarketModal({
   world,
   inventory,
   onBuyItem,
   onBuyRecipe,
-  onBuySnacksCart,
   onClose,
 }: SupermarketModalProps) {
   const [tab, setTab] = useState<SupermarketTab>('supplies');
@@ -56,31 +59,27 @@ export default function SupermarketModal({
   const unlockedSnacksRecipe =
     world.unlockedRecipes.includes('samosa') ||
     world.unlockedRecipes.includes('pakora');
+  const unlockedColdRecipe =
+    world.unlockedRecipes.includes('cold_drink') ||
+    world.unlockedRecipes.includes('ice_cream');
 
   const supplyItems = SUPERMARKET_CATALOG.filter(
     (item) =>
       (item.category === 'supplies' || item.category === 'cups') &&
       (!item.requiresCoffeeRecipe || unlockedCoffee) &&
-      (!item.requiresSnacksRecipe || unlockedSnacksRecipe)
+      (!item.requiresSnacksRecipe || unlockedSnacksRecipe) &&
+      (!item.requiresColdRecipe || unlockedColdRecipe)
   );
   const snackItems = SUPERMARKET_CATALOG.filter(
     (item) => item.category === 'snacks'
   );
-  const furnitureItems = SUPERMARKET_CATALOG.filter(
-    (item) => item.category === 'furniture'
-  );
-
-  // Recipes tab includes DRINK_ORDER + 1 card for buying the 2nd Readi Cart
-  const recipesTabCount = DRINK_ORDER.length + 1;
 
   const activeCount =
     tab === 'supplies'
       ? supplyItems.length
       : tab === 'snacks'
         ? snackItems.length
-        : tab === 'furniture'
-          ? furnitureItems.length
-          : recipesTabCount;
+        : DRINK_ORDER.length;
 
   const safeIndex =
     activeCount > 0 ? Math.min(selectedIdx, activeCount - 1) : 0;
@@ -125,22 +124,7 @@ export default function SupermarketModal({
       if (item && world.cashCents >= item.priceCents) {
         onBuyItem(item.id);
       }
-    } else if (tab === 'furniture') {
-      const item = furnitureItems[safeIndex];
-      if (item && world.cashCents >= item.priceCents) {
-        onBuyItem(item.id);
-      }
     } else {
-      if (safeIndex === DRINK_ORDER.length) {
-        if (
-          unlockedSnacksRecipe &&
-          !world.hasSnacksCart &&
-          world.cashCents >= SNACKS_CART_PRICE_CENTS
-        ) {
-          onBuySnacksCart();
-        }
-        return;
-      }
       const drinkId = DRINK_ORDER[safeIndex];
       const info = drinkId ? DRINK_CATALOG[drinkId] : undefined;
       if (
@@ -158,15 +142,11 @@ export default function SupermarketModal({
     safeIndex,
     supplyItems,
     snackItems,
-    furnitureItems,
     world.cashCents,
     world.unlockedRecipes,
     world.stage,
-    world.hasSnacksCart,
-    unlockedSnacksRecipe,
     onBuyItem,
     onBuyRecipe,
-    onBuySnacksCart,
   ]);
 
   useMenuKeyboard({
@@ -178,8 +158,6 @@ export default function SupermarketModal({
     onClose,
   });
 
-  const chairCount = world.furniture.filter((f) => f.kind === 'chair').length;
-  const tableCount = world.furniture.filter((f) => f.kind === 'table').length;
   const learnedCount = DRINK_ORDER.filter((d) =>
     world.unlockedRecipes.includes(d)
   ).length;
@@ -198,7 +176,7 @@ export default function SupermarketModal({
                 Chai Supermarket
               </h2>
               <p className="text-xs text-[#D6C7B5] tabular-nums">
-                Tea, Sugar, Snacks, Recipes &amp; 2nd Readi · Cash:{' '}
+                Tea, Sugar, Snacks &amp; Recipes · Cash:{' '}
                 <span className="font-mono font-bold text-[#FBBF24]">
                   {formatMoney(world.cashCents)}
                 </span>
@@ -247,10 +225,15 @@ export default function SupermarketModal({
                 </span>
               </>
             )}
-            <span>·</span>
-            <span className="text-[#86EFAC]">
-              Chairs: {chairCount} / Tables: {tableCount}
-            </span>
+            {(unlockedColdRecipe || world.hasColdCart) && (
+              <>
+                <span>·</span>
+                <span className="text-[#7DD3FC]">
+                  Ice: {inventory.iceBlocks} / Soda: {inventory.coldDrinkBottles} / Mix:{' '}
+                  {inventory.iceCreamMix} / Cones: {inventory.iceCreamCones}
+                </span>
+              </>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-1 p-1 rounded-lg bg-[#2A201B]">
@@ -279,18 +262,6 @@ export default function SupermarketModal({
             </button>
             <button
               type="button"
-              onClick={() => switchTab('furniture')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors ${
-                tab === 'furniture'
-                  ? 'bg-[#D97706] text-white'
-                  : 'text-[#FDE68A] hover:text-white'
-              }`}
-            >
-              <Armchair className="w-3.5 h-3.5" />
-              <span>Chairs &amp; Tables</span>
-            </button>
-            <button
-              type="button"
               onClick={() => switchTab('recipes')}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors ${
                 tab === 'recipes'
@@ -299,7 +270,7 @@ export default function SupermarketModal({
               }`}
             >
               <BookOpen className="w-3.5 h-3.5" />
-              <span>Recipes &amp; 2nd Readi ({learnedCount}/4)</span>
+              <span>Recipes ({learnedCount}/{DRINK_ORDER.length})</span>
             </button>
           </div>
         </div>
@@ -417,71 +388,6 @@ export default function SupermarketModal({
             </div>
           )}
 
-          {tab === 'furniture' && (
-            <div className="space-y-3">
-              <div className="p-3 rounded-lg bg-[#221915] border border-[#D4A373]/20 text-xs text-[#FDE68A] leading-relaxed">
-                Buy Chairs &amp; Tables to carry outside or inside your rented shops and place with <span className="font-mono font-bold">E</span>! Customers relax longer on chairs &amp; may leave random tips!
-              </div>
-
-              {furnitureItems.map((item, idx) => {
-                const canAfford = world.cashCents >= item.priceCents;
-                const isSelected = safeIndex === idx;
-                return (
-                  <div
-                    key={item.id}
-                    ref={(el) => {
-                      itemRefs.current[idx] = el;
-                    }}
-                    onMouseEnter={() => setSelectedIdx(idx)}
-                    className={`flex items-center justify-between gap-4 p-4 rounded-lg border transition-colors ${
-                      isSelected
-                        ? 'bg-[#33261F] border-[#FDBA74] ring-1 ring-[#FDBA74]/50'
-                        : 'bg-[#221915] border-[#D4A373]/20'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <ChevronRight
-                        className={`w-4 h-4 shrink-0 transition-opacity ${
-                          isSelected
-                            ? 'text-[#FDBA74] opacity-100'
-                            : 'opacity-0'
-                        }`}
-                      />
-                      <div className="min-w-0">
-                        <div className="font-display font-bold text-sm">
-                          {item.name}
-                        </div>
-                        <div className="text-xs text-[#D6C7B5] mt-0.5">
-                          {item.description}
-                        </div>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={!canAfford}
-                      onClick={() => onBuyItem(item.id)}
-                      className={`flex items-center gap-1.5 px-4 py-2 rounded-lg font-mono text-xs font-bold whitespace-nowrap shrink-0 transition-colors ${
-                        canAfford
-                          ? 'bg-[#D97706] hover:bg-[#B45309] text-white cursor-pointer'
-                          : 'bg-[#1B1410] text-[#78716C] cursor-not-allowed'
-                      }`}
-                    >
-                      <Armchair className="w-3.5 h-3.5" />
-                      <span>Buy {formatMoney(item.priceCents)}</span>
-                    </button>
-                  </div>
-                );
-              })}
-
-              {world.pendingFurniture.length > 0 && (
-                <div className="p-3 rounded-lg bg-[#1E293B] border border-[#38BDF8]/30 text-xs text-[#BAE6FD]">
-                  <span className="font-bold">{world.pendingFurniture.length} item(s)</span> waiting at the Supermarket Pickup Pad by the entrance! Empty your hands and press <span className="font-mono font-bold">E</span> there to pick up.
-                </div>
-              )}
-            </div>
-          )}
-
           {tab === 'recipes' && (
             <div className="space-y-3">
               {world.stage < 2 && (
@@ -490,9 +396,20 @@ export default function SupermarketModal({
                   <span className="font-mono font-bold">
                     {Math.max(0, LEVEL2_SERVED_THRESHOLD - world.totalServed)}
                   </span>{' '}
-                  more orders (or finish Day 1) to unlock Level 2 recipes! You can already learn the Samosa &amp; Pakora Recipe below anytime!
+                  more orders (or finish Day 1) to unlock Level 2 recipes! You can already learn the Samosa &amp; Pakora or Cold Drinks &amp; Ice Cream recipes below anytime!
                 </div>
               )}
+
+              <div className="p-3 rounded-lg bg-[#221915] border border-[#D97706]/35 flex items-start gap-2.5 text-xs text-[#FDE68A]">
+                <Hammer className="w-4 h-4 text-[#FBBF24] shrink-0 mt-0.5" />
+                <div>
+                  Need <span className="font-bold">Chairs, Tables, Shop Kitchens, 2nd Snacks Readi, or 3rd Cold Readi</span>? Visit{' '}
+                  <span className="font-semibold text-[#FFFDF9]">
+                    Wood Master Workshop (Ustad Karim)
+                  </span>{' '}
+                  further down the street on the right!
+                </div>
+              </div>
 
               {DRINK_ORDER.map((drinkId, idx) => {
                 const info = DRINK_CATALOG[drinkId];
@@ -503,11 +420,15 @@ export default function SupermarketModal({
                 const title =
                   drinkId === 'samosa'
                     ? 'Samosa & Pakora Recipe (Combo)'
-                    : info.name;
+                    : drinkId === 'cold_drink'
+                      ? 'Cold Drinks & Ice Cream Recipe (Combo)'
+                      : info.name;
                 const priceTag =
                   drinkId === 'samosa'
-                    ? `Samosa $0.80 · Pakora $0.70`
-                    : `Sells ${formatMoney(info.priceCents)}/cup`;
+                    ? 'Samosa $0.80 · Pakora $0.70'
+                    : drinkId === 'cold_drink'
+                      ? 'Cold Drink $0.75 · Ice Cream $0.90'
+                      : `Sells ${formatMoney(info.priceCents)}/cup`;
 
                 return (
                   <div
@@ -598,77 +519,6 @@ export default function SupermarketModal({
                   </div>
                 );
               })}
-
-              {/* Buy 2nd Readi: Samosa & Pakora Cart */}
-              {(() => {
-                const idx = DRINK_ORDER.length;
-                const isSelected = safeIndex === idx;
-                const canAffordCart = world.cashCents >= SNACKS_CART_PRICE_CENTS;
-                return (
-                  <div
-                    ref={(el) => {
-                      itemRefs.current[idx] = el;
-                    }}
-                    onMouseEnter={() => setSelectedIdx(idx)}
-                    className={`rounded-lg border p-4 space-y-2 transition-colors ${
-                      isSelected
-                        ? 'bg-[#33261F] border-[#FCA5A5] ring-1 ring-[#FCA5A5]/50'
-                        : 'bg-[#221915] border-[#B91C1C]/40'
-                    }`}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-start gap-2">
-                        <ChevronRight
-                          className={`w-4 h-4 shrink-0 mt-0.5 transition-opacity ${
-                            isSelected
-                              ? 'text-[#FCA5A5] opacity-100'
-                              : 'opacity-0'
-                          }`}
-                        />
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="font-display font-bold text-sm text-[#FFFDF9]">
-                              2nd Readi: Samosa &amp; Pakora Cart
-                            </h3>
-                            <span className="font-mono text-xs font-bold text-[#FBBF24]">
-                              {formatMoney(SNACKS_CART_PRICE_CENTS)}
-                            </span>
-                          </div>
-                          <p className="text-xs text-[#D6C7B5] mt-0.5">
-                            Sets up a 4-wheel frying Readi on the left plaza with a Hot Oil Kadhai, Paper Plates &amp; 2 Showcase trays (+starter Samosa, Pakora &amp; Oil included!).
-                          </p>
-                        </div>
-                      </div>
-
-                      {world.hasSnacksCart ? (
-                        <div className="flex items-center gap-1.5 text-xs font-semibold text-[#86EFAC]">
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>Owned (Left Plaza)</span>
-                        </div>
-                      ) : !unlockedSnacksRecipe ? (
-                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1B1410] text-[#94A3B8] text-xs font-semibold">
-                          <Lock className="w-3.5 h-3.5" />
-                          <span>Buy Samosa &amp; Pakora Recipe First</span>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={!canAffordCart}
-                          onClick={onBuySnacksCart}
-                          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg font-mono text-xs font-bold cursor-pointer ${
-                            canAffordCart
-                              ? 'bg-[#B91C1C] hover:bg-[#991B1B] text-white'
-                              : 'bg-[#1B1410] text-[#78716C] cursor-not-allowed'
-                          }`}
-                        >
-                          <ShoppingBag className="w-3.5 h-3.5" />
-                          <span>Buy 2nd Readi {formatMoney(SNACKS_CART_PRICE_CENTS)}</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
             </div>
           )}
         </div>

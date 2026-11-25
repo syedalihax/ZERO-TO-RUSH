@@ -19,8 +19,16 @@ import {
 import type { DrinkType, HeldItem } from '@/lib/game/types';
 
 interface CustomerActionModalProps {
-  targetKind: 'customer' | 'car';
+  targetKind:
+    | 'customer'
+    | 'car'
+    | 'owner_customer'
+    | 'shop_visitor'
+    | 'beggar_kid'
+    | 'beggar_helper';
   requestedDrink: DrinkType;
+  npcLabel?: string;
+  isFreeHelp?: boolean;
   availableChoices: DrinkType[];
   holding: HeldItem;
   onOfferAlternative: (drink: DrinkType) => void;
@@ -31,6 +39,8 @@ interface CustomerActionModalProps {
 export default function CustomerActionModal({
   targetKind,
   requestedDrink,
+  npcLabel,
+  isFreeHelp,
   availableChoices,
   holding,
   onOfferAlternative,
@@ -40,6 +50,14 @@ export default function CustomerActionModal({
   const reqInfo = DRINK_CATALOG[requestedDrink] ?? DRINK_CATALOG.tea;
   const alternatives = availableChoices.filter((d) => d !== requestedDrink);
   const heldDrink = heldHotDrinkType(holding);
+  const isBeggarKid = Boolean(
+    isFreeHelp || targetKind === 'beggar_kid' || targetKind === 'beggar_helper'
+  );
+  const titleText = npcLabel
+    ? `${npcLabel} Order`
+    : targetKind === 'car'
+      ? 'Car Customer Order'
+      : 'Customer Order';
 
   const totalOptions = alternatives.length + 1; // offers + reject button
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -80,14 +98,16 @@ export default function CustomerActionModal({
             )}
             <div>
               <h2 className="font-display font-bold text-base leading-tight">
-                {targetKind === 'car' ? 'Car Customer Order' : 'Customer Order'}
+                {titleText}
               </h2>
               <p className="text-xs text-[#D6C7B5]">
-                Requested:{' '}
+                {isBeggarKid ? 'Free Request: ' : 'Requested: '}
                 <span className="font-semibold text-[#FDE68A]">
                   {reqInfo.name}
                 </span>{' '}
-                ({formatMoney(reqInfo.priceCents)})
+                {isBeggarKid
+                  ? '($0 Free · +10% Sales Blessing)'
+                  : `(${formatMoney(reqInfo.priceCents)})`}
               </p>
             </div>
           </div>
@@ -104,13 +124,15 @@ export default function CustomerActionModal({
 
         <div className="p-5 space-y-4">
           <p className="text-xs text-[#EAE0D0] leading-relaxed">
-            Out of ingredients or prefer not to make {reqInfo.name}? Offer another unlocked drink instead, or politely turn down the order.
+            {isBeggarKid
+              ? `Out of ${reqInfo.name}? Offer another available item for free so the kid gets fed (boosts your sales % & customer flow!), or turn them away.`
+              : `Out of ingredients or prefer not to serve ${reqInfo.name}? Offer another item from your Sales Menu instead, or politely reject the order.`}
           </p>
 
           {alternatives.length > 0 ? (
             <div className="space-y-2">
               <div className="text-[11px] font-mono uppercase tracking-wider text-[#D4A373]">
-                Offer Another Drink
+                {isBeggarKid ? 'Offer Free Alternative' : 'Offer Another Item'}
               </div>
               {alternatives.map((alt, idx) => {
                 const info = DRINK_CATALOG[alt] ?? DRINK_CATALOG.tea;
@@ -145,7 +167,9 @@ export default function CustomerActionModal({
                           )}
                         </div>
                         <div className="text-xs text-[#D6C7B5]">
-                          {formatMoney(info.priceCents)} · Most customers accept
+                          {isBeggarKid
+                            ? 'Free ($0) · Kid happily accepts'
+                            : `${formatMoney(info.priceCents)} · Most accept`}
                         </div>
                       </div>
                     </div>
@@ -156,7 +180,7 @@ export default function CustomerActionModal({
             </div>
           ) : (
             <div className="p-3 rounded-lg bg-[#221915] border border-[#D4A373]/15 text-xs text-[#D6C7B5]">
-              Buy Doodh Patti or Coffee recipes inside the Open Supermarket on the right (E) to offer alternative drinks!
+              Unlock more recipes inside the Open Supermarket (E) or enable more items in Sales Menu (M) to offer alternatives!
             </div>
           )}
 
@@ -171,7 +195,11 @@ export default function CustomerActionModal({
             }`}
           >
             <Ban className="w-4 h-4" />
-            <span>Reject Order (Sold Out / No Ingredients)</span>
+            <span>
+              {isBeggarKid
+                ? 'Turn Away (Cannot Give Free Today)'
+                : 'Reject Order (Sold Out / Decline)'}
+            </span>
           </button>
         </div>
 

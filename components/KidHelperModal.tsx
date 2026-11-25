@@ -7,33 +7,42 @@ import {
   ChevronRight,
   Coins,
   HeartHandshake,
+  Lock,
   X,
 } from 'lucide-react';
 import { useMenuKeyboard } from '@/hooks/use-menu-keyboard';
 import {
   HELPER_CHARITY_CENTS,
+  HELPER_NPCS,
   HELPER_WAGE_CENTS,
   formatMoney,
 } from '@/lib/game/constants';
-import type { HelperKidState } from '@/lib/game/types';
+import type { HelperKidState, HelperNpcId } from '@/lib/game/types';
 
 interface KidHelperModalProps {
   cashCents: number;
   helper: HelperKidState;
-  onGiveCharity: () => void;
-  onHireHelper: () => void;
+  hasSnacksCart: boolean;
+  onGiveCharity: (helperId: HelperNpcId) => void;
+  onHireHelper: (helperId: HelperNpcId) => void;
   onClose: () => void;
 }
 
 export default function KidHelperModal({
   cashCents,
   helper,
+  hasSnacksCart,
   onGiveCharity,
   onHireHelper,
   onClose,
 }: KidHelperModalProps) {
+  const helperId: HelperNpcId = helper.id ?? 'chotu';
+  const cfg = HELPER_NPCS[helperId];
+  const isMunni = helperId === 'munni';
+  const hireLocked = cfg.requiresSnacksCart && !hasSnacksCart;
+
   const [selectedIdx, setSelectedIdx] = useState(
-    helper.charityGivenToday ? 1 : 0
+    helper.charityGivenToday && !hireLocked ? 1 : 0
   );
 
   const handleMove = useCallback(() => {
@@ -43,15 +52,17 @@ export default function KidHelperModal({
   const handleSelect = useCallback(() => {
     if (selectedIdx === 0) {
       if (!helper.charityGivenToday && cashCents >= HELPER_CHARITY_CENTS) {
-        onGiveCharity();
+        onGiveCharity(helperId);
       }
-    } else {
-      onHireHelper();
+    } else if (!hireLocked) {
+      onHireHelper(helperId);
     }
   }, [
     selectedIdx,
     helper.charityGivenToday,
     cashCents,
+    hireLocked,
+    helperId,
     onGiveCharity,
     onHireHelper,
   ]);
@@ -68,21 +79,32 @@ export default function KidHelperModal({
   const canAffordCharity =
     !helper.charityGivenToday && cashCents >= HELPER_CHARITY_CENTS;
 
+  const greetingText = isMunni
+    ? `"Bhaiya, please give ${formatMoney(HELPER_CHARITY_CENTS)} help, or let me work at your 2nd Samosa Readi once you own one!"`
+    : `"Bhaiya, please give ${formatMoney(HELPER_CHARITY_CENTS)} or let me work as your helper today!"`;
+
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-[#1B1410]/85 p-4">
-      <div className="w-full max-w-lg rounded-xl bg-[#2A201B] border border-[#FBBF24]/40 shadow-2xl text-[#FFFDF9] overflow-hidden">
+      <div
+        className={`w-full max-w-lg rounded-xl bg-[#2A201B] border shadow-2xl text-[#FFFDF9] overflow-hidden ${
+          isMunni ? 'border-[#F472B6]/45' : 'border-[#FBBF24]/40'
+        }`}
+      >
         <div className="flex items-center justify-between px-6 py-4 bg-[#221915] border-b border-[#D4A373]/15">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-[#D97706] flex items-center justify-center shrink-0">
+            <div
+              className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                isMunni ? 'bg-[#DB2777]' : 'bg-[#D97706]'
+              }`}
+            >
               <HeartHandshake className="w-5 h-5 text-white" />
             </div>
             <div>
               <h2 className="font-display font-bold text-lg leading-tight">
-                Chotu (Boy Outside Market)
+                {cfg.title}
               </h2>
               <p className="text-xs text-[#D6C7B5] tabular-nums">
-                &ldquo;Bhaiya, please give {formatMoney(HELPER_CHARITY_CENTS)}{' '}
-                or let me work at your Chai Readi!&rdquo; · Cash:{' '}
+                {greetingText} · Cash:{' '}
                 <span className="font-mono font-bold text-[#FBBF24]">
                   {formatMoney(cashCents)}
                 </span>
@@ -121,8 +143,9 @@ export default function KidHelperModal({
                   Give {formatMoney(HELPER_CHARITY_CENTS)} Help (Charity)
                 </div>
                 <p className="text-xs text-[#D6C7B5] mt-0.5">
-                  Donate {formatMoney(HELPER_CHARITY_CENTS)} once today. Spreads
-                  goodwill and calms waiting customers (+patience boost!).
+                  Donate {formatMoney(HELPER_CHARITY_CENTS)} once today to{' '}
+                  {cfg.name}. Spreads goodwill and boosts waiting customer
+                  patience!
                 </p>
               </div>
             </div>
@@ -136,7 +159,7 @@ export default function KidHelperModal({
               <button
                 type="button"
                 disabled={!canAffordCharity}
-                onClick={onGiveCharity}
+                onClick={() => onGiveCharity(helperId)}
                 className={`flex items-center gap-1.5 px-4 py-2 rounded-lg font-mono text-xs font-bold whitespace-nowrap shrink-0 transition-colors ${
                   canAffordCharity
                     ? 'bg-[#D97706] hover:bg-[#B45309] text-white cursor-pointer'
@@ -149,47 +172,99 @@ export default function KidHelperModal({
             )}
           </div>
 
-          {/* Option 2: Hire for 1 Day @ $0.15 per serve */}
+          {/* Option 2: Hire for 1 Day */}
           <div
             onMouseEnter={() => setSelectedIdx(1)}
             className={`flex items-center justify-between gap-4 p-4 rounded-lg border transition-colors ${
               selectedIdx === 1
-                ? 'bg-[#33261F] border-[#86EFAC] ring-1 ring-[#86EFAC]/50'
+                ? hireLocked
+                  ? 'bg-[#33261F] border-[#94A3B8] ring-1 ring-[#94A3B8]/40'
+                  : 'bg-[#33261F] border-[#86EFAC] ring-1 ring-[#86EFAC]/50'
                 : 'bg-[#221915] border-[#D4A373]/15'
             }`}
           >
             <div className="flex items-start gap-2.5 min-w-0">
               <ChevronRight
                 className={`w-4 h-4 shrink-0 mt-0.5 transition-opacity ${
-                  selectedIdx === 1 ? 'text-[#86EFAC] opacity-100' : 'opacity-0'
+                  selectedIdx === 1
+                    ? hireLocked
+                      ? 'text-[#94A3B8] opacity-100'
+                      : 'text-[#86EFAC] opacity-100'
+                    : 'opacity-0'
                 }`}
               />
               <div className="min-w-0">
-                <div className="font-display font-bold text-sm text-[#86EFAC]">
-                  Hire as Readi Helper (1 Day Job)
+                <div
+                  className={`font-display font-bold text-sm ${
+                    hireLocked ? 'text-[#CBD5E1]' : 'text-[#86EFAC]'
+                  }`}
+                >
+                  {isMunni
+                    ? 'Hire as Samosa Readi Helper (1 Day Job)'
+                    : 'Hire as Readi Helper (1 Day Job)'}
                 </div>
-                <p className="text-xs text-[#D6C7B5] mt-0.5">
-                  Chotu works at your Chai Readi today — making &amp; serving{' '}
-                  <span className="font-semibold text-[#FFFDF9]">
-                    Simple Chai, Doodh Patti &amp; Coffee
-                  </span>{' '}
-                  to customers and cars! Wage:{' '}
-                  <span className="font-mono font-bold text-[#FBBF24]">
-                    {formatMoney(HELPER_WAGE_CENTS)}
-                  </span>{' '}
-                  deducted per cup he serves.
-                </p>
+                {isMunni ? (
+                  <p className="text-xs text-[#D6C7B5] mt-0.5">
+                    {hireLocked ? (
+                      <>
+                        Requires your{' '}
+                        <span className="font-semibold text-[#FDE68A]">
+                          2nd Snacks Readi (Samosa &amp; Pakora Cart)
+                        </span>{' '}
+                        built at Wood Master Workshop. She only helps at the
+                        Samosa Readi (never Chai Readi).
+                      </>
+                    ) : (
+                      <>
+                        {cfg.name} works ONLY at your{' '}
+                        <span className="font-semibold text-[#FFFDF9]">
+                          2nd Samosa &amp; Pakora Readi
+                        </span>{' '}
+                        (never Chai Readi). Wage:{' '}
+                        <span className="font-mono font-bold text-[#FBBF24]">
+                          20% profit share ($0.16 Samosa / $0.14 Pakora)
+                        </span>{' '}
+                        per order she serves!
+                      </>
+                    )}
+                  </p>
+                ) : (
+                  <p className="text-xs text-[#D6C7B5] mt-0.5">
+                    {cfg.name} works at your Cafe &amp; Readi carts today — making
+                    &amp; serving everything you stock:{' '}
+                    <span className="font-semibold text-[#FFFDF9]">
+                      Chai, Doodh Patti, Coffee, Biscuits, Cupcakes, Samosa,
+                      Pakora, Cold Drinks &amp; Ice Cream
+                    </span>
+                    ! Wage:{' '}
+                    <span className="font-mono font-bold text-[#FBBF24]">
+                      {formatMoney(HELPER_WAGE_CENTS)}
+                    </span>{' '}
+                    per serve. If unhired, hungry kids also ask for a free item and market your stalls in return!
+                  </p>
+                )}
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={onHireHelper}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg font-mono text-xs font-bold whitespace-nowrap shrink-0 bg-[#15803D] hover:bg-[#166534] text-white cursor-pointer transition-colors"
-            >
-              <Briefcase className="w-3.5 h-3.5" />
-              <span>Hire ({formatMoney(HELPER_WAGE_CENTS)}/cup)</span>
-            </button>
+            {hireLocked ? (
+              <div className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1B1410] text-[#94A3B8] font-mono text-xs font-semibold shrink-0">
+                <Lock className="w-3.5 h-3.5" />
+                <span>Need Samosa Cart</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onHireHelper(helperId)}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg font-mono text-xs font-bold whitespace-nowrap shrink-0 text-white cursor-pointer transition-colors ${
+                  isMunni
+                    ? 'bg-[#DB2777] hover:bg-[#BE185D]'
+                    : 'bg-[#15803D] hover:bg-[#166534]'
+                }`}
+              >
+                <Briefcase className="w-3.5 h-3.5" />
+                <span>{isMunni ? 'Hire (20% wage)' : `Hire (${formatMoney(HELPER_WAGE_CENTS)}/order)`}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -203,3 +278,4 @@ export default function KidHelperModal({
     </div>
   );
 }
+

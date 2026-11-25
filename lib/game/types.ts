@@ -5,7 +5,9 @@ export type DrinkType =
   | 'biscuit_pack'
   | 'cupcake'
   | 'samosa'
-  | 'pakora';
+  | 'pakora'
+  | 'cold_drink'
+  | 'ice_cream';
 
 export type FurnitureKind = 'chair' | 'table';
 
@@ -36,6 +38,13 @@ export type HeldItem =
   | 'raw_pakora'
   | 'hot_samosa'
   | 'hot_pakora'
+  | 'cold_bottle'
+  | 'cold_bottle_iced'
+  | 'chilled_cold_drink'
+  | 'empty_cone'
+  | 'cone_with_mix'
+  | 'iced_cream_mix'
+  | 'ready_ice_cream'
   | 'carried_chair'
   | 'carried_table'
   | null;
@@ -52,6 +61,10 @@ export interface InventoryState {
   samosaMix: number;
   pakoraMix: number;
   cookingOil: number;
+  iceBlocks: number;
+  coldDrinkBottles: number;
+  iceCreamMix: number;
+  iceCreamCones: number;
 }
 
 export interface KettleState {
@@ -66,6 +79,12 @@ export interface FryerState {
   fryingSnack: 'samosa' | 'pakora' | null;
 }
 
+export interface ChillerState {
+  status: 'idle' | 'chilling' | 'ready';
+  progress: number; // 0..1
+  chillingItem: 'cold_drink' | 'ice_cream' | null;
+}
+
 export type HelperTask =
   | 'idle'
   | 'fetching_cup'
@@ -74,9 +93,34 @@ export type HelperTask =
   | 'adding_liquid'
   | 'to_kettle'
   | 'waiting_boil'
+  | 'fetching_biscuit'
+  | 'fetching_cupcake'
+  | 'fetching_plate'
+  | 'prepping_snack'
+  | 'to_kadhai'
+  | 'waiting_fry'
+  | 'fetching_soda'
+  | 'fetching_cone'
+  | 'adding_ic_mix'
+  | 'adding_ice'
+  | 'to_chiller'
+  | 'waiting_chill'
   | 'serving';
 
+export type HelperNpcId = 'chotu' | 'munni' | 'babloo';
+
+export type HelperBeggingState =
+  | 'at_mat'
+  | 'walking_to_stall'
+  | 'begging_at_stall'
+  | 'eating_free'
+  | 'returning_marketing'
+  | 'marketing';
+
 export interface HelperKidState {
+  id?: HelperNpcId;
+  name?: string;
+  role?: 'general' | 'snacks_only';
   x: number;
   z: number;
   yaw: number;
@@ -84,13 +128,22 @@ export interface HelperKidState {
   status: 'sitting' | 'hired';
   charityGivenToday: boolean;
   task: HelperTask;
-  targetDrink: 'tea' | 'doodh_patti' | 'coffee' | null;
+  targetDrink: DrinkType | null;
   targetCustomerId: string | null;
   holding: HeldItem;
   actionTimer: number;
   servedCount: number;
   wageEarnedCents: number;
   statusNote: string | null;
+  beggingState?: HelperBeggingState;
+  beggingDrink?: DrinkType | null;
+  beggingPatience?: number;
+  beggingMaxPatience?: number;
+  beggingEatTimer?: number;
+  hungerTimer?: number;
+  marketingTimer?: number;
+  marketingCallTimer?: number;
+  heldByHelperName?: string | null;
 }
 
 export interface MilkmanState {
@@ -129,11 +182,73 @@ export interface SupermarketOwnerState {
   targetZ: number;
   waitTimer: number;
   nextVisitTimer: number;
-  orderDrink: 'tea' | 'doodh_patti';
+  orderDrink: DrinkType;
   patience: number;
   maxPatience: number;
   drinkTimer: number;
   walkCycle: number;
+}
+
+export type ShopVisitorId =
+  | 'west_owner'
+  | 'center_owner'
+  | 'east_owner'
+  | 'gear_buyer'
+  | 'wood_master';
+
+export interface ShopVisitorState {
+  id: ShopVisitorId;
+  name: string;
+  roleLabel: string;
+  x: number;
+  z: number;
+  yaw: number;
+  homeX: number;
+  homeZ: number;
+  homeYaw: number;
+  doorX: number;
+  doorZ: number;
+  counterX: number;
+  counterZ: number;
+  phase:
+    | 'at_shop'
+    | 'walking_to_stall'
+    | 'ordering'
+    | 'eating_drinking'
+    | 'returning_to_shop';
+  targetX: number;
+  targetZ: number;
+  nextVisitTimer: number;
+  orderDrink: DrinkType;
+  patience: number;
+  maxPatience: number;
+  drinkTimer: number;
+  walkCycle: number;
+  shirtColor: string;
+  hairColor: string;
+}
+
+export interface BeggarKidCustomer {
+  id: string;
+  seq: number;
+  slotIndex: number;
+  x: number;
+  z: number;
+  yaw: number;
+  targetX: number;
+  targetZ: number;
+  status: 'walking_in' | 'waiting' | 'eating' | 'marketing' | 'walking_out';
+  orderDrink: DrinkType;
+  patience: number;
+  maxPatience: number;
+  eatTimer: number;
+  walkCycle: number;
+  shirtColor: string;
+  hairColor: string;
+  heldByHelperName?: string | null;
+  marketingTimer?: number;
+  marketingMoveTimer?: number;
+  marketingCallTimer?: number;
 }
 
 export interface TeaCustomer {
@@ -202,23 +317,60 @@ export type InteractTargetKind =
   | 'kadhai'
   | 'snack_tray'
   | 'buy_snacks_cart'
+  | 'soda_crate'
+  | 'cone_stack'
+  | 'icecream_tub'
+  | 'ice_box'
+  | 'chiller'
+  | 'cold_tray'
+  | 'buy_cold_cart'
   | 'helper_kid'
+  | 'beggar_helper'
   | 'building_owner'
+  | 'gear_buyer'
   | 'trash'
   | 'water_tap'
   | 'supermarket'
   | 'supermarket_pickup'
+  | 'wood_master'
+  | 'wood_master_pickup'
   | 'furniture_chair'
   | 'furniture_table'
   | 'place_furniture'
   | 'stand_up'
   | 'customer'
   | 'owner_customer'
+  | 'shop_visitor'
+  | 'beggar_kid'
   | 'car'
   | 'milkman'
   | null;
 
 export type ShopBuildingId = 'west_shop' | 'center_shop' | 'east_shop';
+
+export type WoodOrderKind =
+  | 'chair'
+  | 'table'
+  | 'shop_kitchen'
+  | 'snacks_cart'
+  | 'cold_cart'
+  | 'chai_stall';
+
+export interface WoodMasterOrder {
+  id: string;
+  kind: WoodOrderKind;
+  label: string;
+  priceCents: number;
+  durationSec: number;
+  remainingSec: number;
+  status: 'building' | 'ready';
+  targetShopId?: ShopBuildingId;
+  notified?: boolean;
+}
+
+export interface Player2State extends Player3DState {
+  active: boolean;
+}
 
 export interface RentedShopRecord {
   buildingId: ShopBuildingId;
@@ -236,16 +388,25 @@ export interface ShiftSnapshot {
   servedCount: number;
   missedCount: number;
   player: Player3DState;
+  player2?: Player2State;
   trayItem: HeldItem;
   trayItems: HeldItem[];
   snackTrayItems: HeldItem[];
+  coldTrayItems?: HeldItem[];
   inventory: InventoryState;
   kettle: KettleState;
   fryer: FryerState;
+  chiller?: ChillerState;
   helper: HelperKidState;
+  helpers?: HelperKidState[];
   milkman: MilkmanState;
   carCustomer: CarCustomerState;
   supermarketOwner: SupermarketOwnerState;
+  shopVisitors?: ShopVisitorState[];
+  beggarKids?: BeggarKidCustomer[];
+  beggarSpawnTimer?: number;
+  beggarKidsHelped?: number;
+  salesBoostPercent?: number;
   customers: TeaCustomer[];
   pedestrians: FootpathPedestrian[];
   spawnTimer: number;
@@ -264,8 +425,13 @@ export interface WorldSave {
   cashCents: number;
   totalServed: number;
   unlockedRecipes: DrinkType[];
+  disabledMenuItems?: DrinkType[];
+  hasTeaStall?: boolean;
   hasSnacksCart: boolean;
+  hasColdCart?: boolean;
   rentedShops: RentedShopRecord[];
+  shopKitchens?: ShopBuildingId[];
+  woodOrders?: WoodMasterOrder[];
   furniture: CafeFurniture[];
   pendingFurniture: FurnitureKind[];
   activeShift: ShiftSnapshot | null;
@@ -298,11 +464,24 @@ export interface SimStepEvents {
   openSupermarket: boolean;
   openMilkmanShop: boolean;
   openHelperModal: boolean;
+  openHelperId?: HelperNpcId | null;
+  openGearBuyer: boolean;
+  openWoodMaster?: boolean;
+  openModalActor?: 'p1' | 'p2';
   openBuildingOwnerId: ShopBuildingId | null;
   openCustomerAction: {
-    kind: 'customer' | 'car';
+    kind:
+      | 'customer'
+      | 'car'
+      | 'owner_customer'
+      | 'shop_visitor'
+      | 'beggar_kid'
+      | 'beggar_helper';
     id: string;
     requestedDrink: DrinkType;
+    actorId?: 'p1' | 'p2';
+    npcLabel?: string;
+    isFreeHelp?: boolean;
   } | null;
   feedbackText: string | null;
   feedbackColor: string;
@@ -314,18 +493,26 @@ export interface ProjectedLabel {
   kind:
     | 'customer'
     | 'owner'
+    | 'shop_visitor'
+    | 'beggar_kid'
     | 'helper'
     | 'building_owner'
+    | 'gear_buyer'
+    | 'wood_master'
+    | 'coop_partner'
     | 'car'
     | 'kettle'
     | 'fryer'
+    | 'chiller'
     | 'milkman'
     | 'supermarket'
     | 'supermarket_pickup'
     | 'snacks_plot'
+    | 'cold_plot'
     | 'water_tap'
     | 'trash'
-    | 'counter_tray';
+    | 'counter_tray'
+    | 'out_of_stock';
   x: number;
   y: number;
   visible: boolean;

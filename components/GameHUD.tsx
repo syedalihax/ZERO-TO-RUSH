@@ -3,19 +3,31 @@
 import {
   Bike,
   Building2,
+  ClipboardList,
+  Hammer,
   HeartHandshake,
+  PackageCheck,
   Pause,
   Save,
+  Sparkles,
+  Users,
   Volume2,
   VolumeX,
 } from 'lucide-react';
 import {
   HELD_ITEM_LABELS,
+  HELPER_NPCS,
   LEVEL2_SERVED_THRESHOLD,
   MAX_WATER_CAPACITY,
   formatMoney,
 } from '@/lib/game/constants';
+import {
+  getDrinkStockStatus,
+  getShiftHelpers,
+  isMenuItemEnabled,
+} from '@/lib/game/engine';
 import type {
+  HelperNpcId,
   ProjectedLabel,
   ShiftSnapshot,
   WorldSave,
@@ -27,12 +39,15 @@ interface GameHUDProps {
   projectedLabels: ProjectedLabel[];
   guidedHint: string;
   targetPrompt: string | null;
+  p2TargetPrompt?: string | null;
   feedbackBanner: { text: string; color: string } | null;
   muted: boolean;
   saveLabel: string;
   onToggleMute: () => void;
   onPause: () => void;
   onQuickSave: () => void;
+  onOpenSalesMenu: () => void;
+  onOpenCoop: () => void;
 }
 
 function formatClock(seconds: number): string {
@@ -48,12 +63,15 @@ export default function GameHUD({
   projectedLabels,
   guidedHint,
   targetPrompt,
+  p2TargetPrompt,
   feedbackBanner,
   muted,
   saveLabel,
   onToggleMute,
   onPause,
   onQuickSave,
+  onOpenSalesMenu,
+  onOpenCoop,
 }: GameHUDProps) {
   const milkman = shift.milkman;
   const showMilk =
@@ -69,6 +87,22 @@ export default function GameHUD({
   const overdueRentShops = world.rentedShops.filter(
     (r) => world.day >= r.nextRentDueDay
   );
+  const enabledDrinkCount = (['tea', 'doodh_patti', 'coffee'] as const).filter(
+    (d) => world.unlockedRecipes.includes(d) && isMenuItemEnabled(world, d)
+  ).length;
+  const hasOutOfStockDrink = (['tea', 'doodh_patti', 'coffee'] as const).some(
+    (d) =>
+      world.unlockedRecipes.includes(d) &&
+      isMenuItemEnabled(world, d) &&
+      !getDrinkStockStatus(d, shift).inStock
+  );
+  const hiredHelpers = getShiftHelpers(shift).filter(
+    (h) => h.status === 'hired'
+  );
+  const woodOrders = world.woodOrders ?? [];
+  const readyWoodOrders = woodOrders.filter((o) => o.status === 'ready');
+  const buildingWoodOrders = woodOrders.filter((o) => o.status === 'building');
+  const coopActive = Boolean(shift.player2?.active);
 
   return (
     <div className="fixed inset-0 z-20 pointer-events-none">
@@ -84,27 +118,48 @@ export default function GameHUD({
             className="absolute top-0 left-0 pointer-events-none"
           >
             <div
-              className={`px-2 py-0.5 rounded-md bg-[#1B1410]/88 border text-[#FFFDF9] shadow-md text-center whitespace-nowrap ${
-                lbl.urgent
-                  ? 'border-[#EF4444]'
-                  : lbl.kind === 'milkman' || lbl.kind === 'water_tap'
-                    ? 'border-[#38BDF8]'
-                    : lbl.kind === 'supermarket' ||
-                        lbl.kind === 'supermarket_pickup' ||
-                        lbl.kind === 'owner'
-                      ? 'border-[#86EFAC]/70'
-                      : lbl.kind === 'helper'
-                        ? 'border-[#FBBF24]'
-                        : lbl.kind === 'building_owner'
-                          ? 'border-[#A78BFA]'
-                          : lbl.kind === 'car' ||
-                              lbl.kind === 'counter_tray' ||
-                              lbl.kind === 'fryer' ||
-                              lbl.kind === 'snacks_plot'
-                            ? 'border-[#F59E0B]'
-                            : lbl.kind === 'trash'
-                              ? 'border-[#94A3B8]/60'
-                              : 'border-[#D4A373]/40'
+              className={`px-2 py-0.5 rounded-md border shadow-md text-center whitespace-nowrap ${
+                lbl.kind === 'out_of_stock'
+                  ? 'bg-[#7F1D1D]/95 border-[#EF4444] text-[#FEE2E2] font-bold'
+                  : lbl.kind === 'wood_master' && lbl.urgent
+                    ? 'bg-[#14532D]/95 border-[#4ADE80] text-[#DCFCE7] font-bold'
+                    : lbl.kind === 'coop_partner'
+                      ? lbl.id === 'coop_p1'
+                        ? 'bg-[#7C2D12]/90 border-[#FB923C] text-[#FFEDD5] font-bold'
+                        : 'bg-[#134E4A]/90 border-[#2DD4BF] text-[#CCFBF1] font-bold'
+                      : lbl.kind === 'beggar_kid'
+                        ? `bg-[#451A03]/92 text-[#FEF3C7] ${
+                            lbl.urgent
+                              ? 'border-[#EF4444]'
+                              : 'border-[#F59E0B]'
+                          }`
+                        : `bg-[#1B1410]/88 text-[#FFFDF9] ${
+                            lbl.urgent
+                              ? 'border-[#EF4444]'
+                              : lbl.kind === 'milkman' || lbl.kind === 'water_tap'
+                                ? 'border-[#38BDF8]'
+                                : lbl.kind === 'supermarket' ||
+                                    lbl.kind === 'supermarket_pickup' ||
+                                    lbl.kind === 'owner' ||
+                                    lbl.kind === 'shop_visitor'
+                                  ? 'border-[#86EFAC]/70'
+                                  : lbl.kind === 'helper'
+                                    ? 'border-[#FBBF24]'
+                                    : lbl.kind === 'building_owner'
+                                      ? 'border-[#A78BFA]'
+                                      : lbl.kind === 'gear_buyer'
+                                        ? 'border-[#C084FC]'
+                                        : lbl.kind === 'wood_master'
+                                          ? 'border-[#D97706]'
+                                          : lbl.kind === 'car' ||
+                                              lbl.kind === 'counter_tray' ||
+                                              lbl.kind === 'fryer' ||
+                                              lbl.kind === 'snacks_plot'
+                                            ? 'border-[#F59E0B]'
+                                            : lbl.kind === 'trash'
+                                              ? 'border-[#94A3B8]/60'
+                                              : 'border-[#D4A373]/40'
+                          }`
               }`}
             >
               <div className="text-[10px] font-semibold flex items-center justify-center gap-1">
@@ -309,15 +364,53 @@ export default function GameHUD({
               </div>
             )}
 
-            {shift.helper.status === 'hired' && (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#78350F]/95 border border-[#FBBF24]/50 text-xs font-semibold text-[#FEF3C7] tabular-nums">
-                <HeartHandshake className="w-3.5 h-3.5 text-[#FBBF24]" />
+            {hiredHelpers.map((h) => {
+              const hId: HelperNpcId = h.id ?? 'chotu';
+              const cfg = HELPER_NPCS[hId];
+              return (
+                <div
+                  key={hId}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#78350F]/95 border border-[#FBBF24]/50 text-xs font-semibold text-[#FEF3C7] tabular-nums"
+                >
+                  <HeartHandshake className="w-3.5 h-3.5 text-[#FBBF24]" />
+                  <span>
+                    {cfg.name} ({cfg.role === 'snacks_only' ? 'Snacks' : 'All'}):{' '}
+                    {h.servedCount} ({formatMoney(h.wageEarnedCents)} wage)
+                    {h.statusNote ? ` · ${h.statusNote}` : ''}
+                  </span>
+                </div>
+              );
+            })}
+
+            {readyWoodOrders.length > 0 && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#14532D]/95 border border-[#4ADE80] text-xs font-bold text-[#DCFCE7] tabular-nums shadow-lg">
+                <PackageCheck className="w-4 h-4 text-[#86EFAC]" />
                 <span>
-                  Chotu Working · Served {shift.helper.servedCount} (
-                  {formatMoney(shift.helper.wageEarnedCents)} wage)
-                  {shift.helper.statusNote
-                    ? ` · ${shift.helper.statusNote}`
-                    : ''}
+                  Wood Master Order Ready ({readyWoodOrders.length}):{' '}
+                  {readyWoodOrders[0].label}! Visit Ustad Karim (E)
+                </span>
+              </div>
+            )}
+
+            {buildingWoodOrders.map((wo) => (
+              <div
+                key={wo.id}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#78350F]/90 border border-[#D97706]/60 text-xs font-semibold text-[#FDE68A] tabular-nums"
+              >
+                <Hammer className="w-3.5 h-3.5 text-[#FBBF24]" />
+                <span>
+                  Crafting {wo.label} · {Math.ceil(wo.remainingSec)}s left
+                </span>
+              </div>
+            ))}
+
+            {(shift.beggarKidsHelped ?? 0) > 0 && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#14532D]/92 border border-[#86EFAC]/60 text-xs font-semibold text-[#DCFCE7] tabular-nums">
+                <Sparkles className="w-3.5 h-3.5 text-[#86EFAC]" />
+                <span>
+                  Blessing ({shift.beggarKidsHelped} Kid
+                  {(shift.beggarKidsHelped ?? 0) > 1 ? 's' : ''} Helped): +
+                  {shift.salesBoostPercent ?? 0}% Sales &amp; More Customers
                 </span>
               </div>
             )}
@@ -373,8 +466,41 @@ export default function GameHUD({
             </span>
           </div>
 
-          {/* Top-Right: Save, Mute, Pause */}
+          {/* Top-Right: Co-Op, Menu, Save, Mute, Pause */}
           <div className="pointer-events-auto flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onOpenCoop}
+              title="Invite 2nd Player Co-Op (P)"
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer ${
+                coopActive
+                  ? 'bg-[#0F766E]/95 hover:bg-[#0D9488] border-[#5EEAD4]/60 text-[#CCFBF1]'
+                  : 'bg-[#1B1410]/90 hover:bg-[#2A201B] border-[#14B8A6]/40 text-[#99F6E4] hover:text-[#FFFDF9]'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>{coopActive ? '2P Co-Op [P]' : 'Co-Op [P]'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onOpenSalesMenu}
+              title="Open Cafe Sales Menu (M)"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1B1410]/90 hover:bg-[#2A201B] border border-[#D4A373]/30 text-xs font-semibold text-[#FDE68A] hover:text-[#FFFDF9] whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <ClipboardList className="w-3.5 h-3.5 text-[#FDBA74]" />
+              <span>Menu [M]</span>
+              <span className="font-mono text-[10px] text-[#D6C7B5]">
+                ({enabledDrinkCount})
+              </span>
+              {hasOutOfStockDrink && (
+                <span
+                  aria-hidden="true"
+                  className="w-2 h-2 rounded-full bg-[#EF4444]"
+                />
+              )}
+            </button>
+
             <button
               type="button"
               onClick={onQuickSave}
@@ -420,9 +546,9 @@ export default function GameHUD({
             </div>
           )}
 
-          <div className="px-4 py-2 rounded-lg bg-[#1B1410]/90 border border-[#D4A373]/30 text-xs sm:text-sm text-[#FFFDF9] shadow-lg flex flex-wrap items-center justify-center gap-3 max-w-4xl">
+          <div className="px-4 py-2 rounded-lg bg-[#1B1410]/90 border border-[#D4A373]/30 text-xs sm:text-sm text-[#FFFDF9] shadow-lg flex flex-wrap items-center justify-center gap-3 max-w-5xl">
             <span className="font-semibold text-[#FDBA74]">
-              Holding:{' '}
+              {coopActive ? 'P1 Holding: ' : 'Holding: '}
               {shift.player.holding && HELD_ITEM_LABELS[shift.player.holding]
                 ? HELD_ITEM_LABELS[shift.player.holding]
                 : 'Empty Hands'}
@@ -478,6 +604,31 @@ export default function GameHUD({
               {targetPrompt || guidedHint}
             </span>
           </div>
+
+          {coopActive && shift.player2 && (
+            <div className="px-4 py-1.5 rounded-lg bg-[#134E4A]/92 border border-[#2DD4BF]/50 text-xs text-[#CCFBF1] shadow-lg flex flex-wrap items-center justify-center gap-3 max-w-5xl">
+              <span className="font-semibold text-[#5EEAD4]">
+                P2 Partner:{' '}
+                {shift.player2.holding &&
+                HELD_ITEM_LABELS[shift.player2.holding]
+                  ? HELD_ITEM_LABELS[shift.player2.holding]
+                  : 'Empty Hands'}
+              </span>
+              <span aria-hidden="true" className="text-[#5EEAD4]/40">
+                ·
+              </span>
+              <span
+                className={
+                  p2TargetPrompt
+                    ? 'text-[#86EFAC] font-semibold'
+                    : 'text-[#99F6E4]'
+                }
+              >
+                {p2TargetPrompt ||
+                  'Arrows Move · Enter / Interact · . Alt · R-Shift Dash'}
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>

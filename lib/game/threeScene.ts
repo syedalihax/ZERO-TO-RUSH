@@ -1,14 +1,22 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
+  BUYER_SHOP,
   CAR_PARK_POS,
+  CHILLING_DURATION,
+  COLD_CART_ANCHOR,
+  COLD_CART_PRICE_CENTS,
+  COLD_STATIONS,
+  COLD_TRAY_SPOTS,
   CYCLE_ANCHOR,
   DRINK_CATALOG,
   HELD_ITEM_LABELS,
-  KID_SIT_POS,
+  HELPER_NPCS,
+  HELPER_NPC_IDS,
   MAX_WATER_CAPACITY,
   MILKMAN_PARK_POS,
   RENTABLE_BUILDINGS,
+  type RentableBuildingConfig,
   SNACKS_CART_ANCHOR,
   SNACKS_CART_PRICE_CENTS,
   SNACK_STATIONS,
@@ -17,29 +25,43 @@ import {
   SUPERMARKET_AISLE_POS,
   SUPERMARKET_BOUNDS,
   SUPERMARKET_COUNTER_POS,
-  SUPERMARKET_FURNITURE_POS,
   SUPERMARKET_PICKUP_POS,
   TRASH_BIN_POS,
   TRAY_SPOTS,
   WATER_TAP_POS,
+  WOOD_MASTER_SHOP,
   drinkToHotItem,
   formatMoney,
+  getShopKitchenBounds,
+  getShopKitchenStations,
   heldFurnitureKind,
 } from './constants.ts';
 import {
   type TargetLookup,
+  applySalesBoostCents,
   canPlaceFurnitureAt,
+  findInteractTargetForPlayer,
+  getDrinkStockStatus,
   getFacingAngleForSeat,
   getFurnitureDropSpot,
+  getShiftBeggarKids,
+  getShiftHelpers,
+  getShiftShopVisitors,
+  getStallLookTargetForDrink,
+  isMenuItemEnabled,
   isOwnerInsideSupermarket,
 } from './engine.ts';
 import type {
+  BeggarKidCustomer,
   CafeFurniture,
   FootpathPedestrian,
   HeldItem,
+  HelperNpcId,
+  Player3DState,
   ProjectedLabel,
   ShiftSnapshot,
   ShopBuildingId,
+  ShopVisitorState,
   TeaCustomer,
   WorldSave,
 } from './types.ts';
@@ -47,6 +69,8 @@ import type {
 const _projVec = new THREE.Vector3();
 const _camTarget = new THREE.Vector3();
 const _camPos = new THREE.Vector3();
+const _camTarget2 = new THREE.Vector3();
+const _camPos2 = new THREE.Vector3();
 
 export function detectSoftwareWebGL(): boolean {
   if (typeof document === 'undefined') return false;
@@ -200,6 +224,11 @@ interface CharacterRig {
   heldPlateMesh: THREE.Group;
   heldSamosaMesh: THREE.Group;
   heldPakoraMesh: THREE.Group;
+  heldSodaGroup: THREE.Group;
+  heldSodaIceCollar: THREE.Mesh;
+  heldConeGroup: THREE.Group;
+  heldConeScoop: THREE.Mesh;
+  heldConeIceRing: THREE.Mesh;
   carriedChairMesh: THREE.Group;
   carriedTableMesh: THREE.Group;
 }
@@ -332,6 +361,14 @@ function buildWoodTableGroup(scale = 1): THREE.Group {
   return g;
 }
 
+interface ColdHeldExtras {
+  sodaGroup?: THREE.Group;
+  sodaIceCollar?: THREE.Mesh;
+  coneGroup?: THREE.Group;
+  coneScoop?: THREE.Mesh;
+  coneIceRing?: THREE.Mesh;
+}
+
 function buildHeldItemVisualGroup(): {
   group: THREE.Group;
   cupMeshes: THREE.Mesh[];
@@ -342,6 +379,11 @@ function buildHeldItemVisualGroup(): {
   plateMesh: THREE.Group;
   samosaMesh: THREE.Group;
   pakoraMesh: THREE.Group;
+  sodaGroup: THREE.Group;
+  sodaIceCollar: THREE.Mesh;
+  coneGroup: THREE.Group;
+  coneScoop: THREE.Mesh;
+  coneIceRing: THREE.Mesh;
 } {
   const group = new THREE.Group();
   group.visible = false;
@@ -481,6 +523,82 @@ function buildHeldItemVisualGroup(): {
   pakoraMesh.visible = false;
   group.add(pakoraMesh);
 
+  // Cold Drink Soda Bottle + Frost Ice Collar
+  const sodaGroup = new THREE.Group();
+  const bottleBody = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.056, 0.062, 0.19, 14),
+    new THREE.MeshStandardMaterial({
+      color: 0x0ea5e9,
+      roughness: 0.22,
+      metalness: 0.15,
+    })
+  );
+  bottleBody.position.y = 0.02;
+  const bottleNeck = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.026, 0.052, 0.07, 12),
+    new THREE.MeshStandardMaterial({
+      color: 0x38bdf8,
+      roughness: 0.25,
+    })
+  );
+  bottleNeck.position.y = 0.145;
+  const bottleCap = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.03, 0.03, 0.024, 12),
+    new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.45 })
+  );
+  bottleCap.position.y = 0.188;
+  const bottleLabel = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.061, 0.061, 0.075, 14),
+    new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.5 })
+  );
+  bottleLabel.position.y = 0.02;
+  const sodaIceCollar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.075, 0.078, 0.09, 12),
+    new THREE.MeshStandardMaterial({
+      color: 0xbae6fd,
+      emissive: 0x0284c7,
+      emissiveIntensity: 0.35,
+      transparent: true,
+      opacity: 0.78,
+      roughness: 0.2,
+    })
+  );
+  sodaIceCollar.position.y = -0.025;
+  sodaIceCollar.visible = false;
+  sodaGroup.add(bottleBody, bottleNeck, bottleCap, bottleLabel, sodaIceCollar);
+  sodaGroup.visible = false;
+  group.add(sodaGroup);
+
+  // Waffle Cone & Scoop Ice Cream
+  const coneGroup = new THREE.Group();
+  const coneBody = new THREE.Mesh(
+    new THREE.ConeGeometry(0.076, 0.2, 12),
+    new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.78 })
+  );
+  coneBody.rotation.x = Math.PI;
+  coneBody.position.y = -0.02;
+  const coneScoop = new THREE.Mesh(
+    new THREE.SphereGeometry(0.086, 14, 12),
+    new THREE.MeshStandardMaterial({ color: 0xf9a8d4, roughness: 0.45 })
+  );
+  coneScoop.position.y = 0.092;
+  coneScoop.visible = false;
+  const coneIceRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.088, 0.022, 8, 14),
+    new THREE.MeshStandardMaterial({
+      color: 0xe0f2fe,
+      emissive: 0x38bdf8,
+      emissiveIntensity: 0.4,
+      roughness: 0.25,
+    })
+  );
+  coneIceRing.rotation.x = Math.PI / 2;
+  coneIceRing.position.y = 0.068;
+  coneIceRing.visible = false;
+  coneGroup.add(coneBody, coneScoop, coneIceRing);
+  coneGroup.visible = false;
+  group.add(coneGroup);
+
   return {
     group,
     cupMeshes: [cupBody, cupSleeve],
@@ -491,6 +609,11 @@ function buildHeldItemVisualGroup(): {
     plateMesh,
     samosaMesh,
     pakoraMesh,
+    sodaGroup,
+    sodaIceCollar,
+    coneGroup,
+    coneScoop,
+    coneIceRing,
   };
 }
 
@@ -504,13 +627,76 @@ function applyCupContentsVisual(
   plateMesh: THREE.Group,
   samosaMesh: THREE.Group,
   pakoraMesh: THREE.Group,
-  item: HeldItem
+  item: HeldItem,
+  coldExtras?: ColdHeldExtras
 ): void {
   if (!item || item === 'carried_chair' || item === 'carried_table') {
     cupGroup.visible = false;
     return;
   }
   cupGroup.visible = true;
+
+  if (coldExtras?.sodaGroup) coldExtras.sodaGroup.visible = false;
+  if (coldExtras?.coneGroup) coldExtras.coneGroup.visible = false;
+
+  if (
+    item === 'cold_bottle' ||
+    item === 'cold_bottle_iced' ||
+    item === 'chilled_cold_drink'
+  ) {
+    cupMeshes.forEach((m) => (m.visible = false));
+    fillMesh.visible = false;
+    sugarMesh.visible = false;
+    biscuitMesh.visible = false;
+    cupcakeMesh.visible = false;
+    plateMesh.visible = false;
+    samosaMesh.visible = false;
+    pakoraMesh.visible = false;
+    if (coldExtras?.sodaGroup) {
+      coldExtras.sodaGroup.visible = true;
+      if (coldExtras.sodaIceCollar) {
+        coldExtras.sodaIceCollar.visible =
+          item === 'cold_bottle_iced' || item === 'chilled_cold_drink';
+        const icMat = coldExtras.sodaIceCollar
+          .material as THREE.MeshStandardMaterial;
+        icMat.emissiveIntensity = item === 'chilled_cold_drink' ? 0.85 : 0.3;
+      }
+    }
+    return;
+  }
+
+  if (
+    item === 'empty_cone' ||
+    item === 'cone_with_mix' ||
+    item === 'iced_cream_mix' ||
+    item === 'ready_ice_cream'
+  ) {
+    cupMeshes.forEach((m) => (m.visible = false));
+    fillMesh.visible = false;
+    sugarMesh.visible = false;
+    biscuitMesh.visible = false;
+    cupcakeMesh.visible = false;
+    plateMesh.visible = false;
+    samosaMesh.visible = false;
+    pakoraMesh.visible = false;
+    if (coldExtras?.coneGroup) {
+      coldExtras.coneGroup.visible = true;
+      if (coldExtras.coneScoop) {
+        coldExtras.coneScoop.visible = item !== 'empty_cone';
+        const sMat = coldExtras.coneScoop
+          .material as THREE.MeshStandardMaterial;
+        sMat.color.setHex(item === 'ready_ice_cream' ? 0xf472b6 : 0xfef3c7);
+      }
+      if (coldExtras.coneIceRing) {
+        coldExtras.coneIceRing.visible =
+          item === 'iced_cream_mix' || item === 'ready_ice_cream';
+        const rMat = coldExtras.coneIceRing
+          .material as THREE.MeshStandardMaterial;
+        rMat.emissiveIntensity = item === 'ready_ice_cream' ? 0.75 : 0.25;
+      }
+    }
+    return;
+  }
 
   if (item === 'biscuit_pack') {
     cupMeshes.forEach((m) => (m.visible = false));
@@ -633,7 +819,8 @@ function buildHumanRig(
   shirtHex: string,
   hairHex: string,
   isVendor: boolean,
-  isOwner = false
+  isOwner = false,
+  isGirl = false
 ): CharacterRig {
   const root = new THREE.Group();
   const bodyGroup = new THREE.Group();
@@ -780,6 +967,14 @@ function buildHumanRig(
     );
     nameTag.position.set(-0.11, 1.15, 0.17);
     bodyGroup.add(nameTag);
+  } else if (isGirl) {
+    const frockSkirt = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.24, 0.36, 0.34, 14),
+      shirtMat
+    );
+    frockSkirt.position.set(0, 0.67, 0);
+    frockSkirt.castShadow = true;
+    bodyGroup.add(frockSkirt);
   }
 
   // Dedicated Head Group pivoted at neck base (y=1.34) for realistic sipping & idle head motion
@@ -837,6 +1032,27 @@ function buildHumanRig(
       );
       mustache.position.set(0, 0.19, 0.21);
       headGroup.add(mustache);
+    } else if (isGirl) {
+      const ribbonMat = new THREE.MeshStandardMaterial({
+        color: 0xfacc15,
+        roughness: 0.5,
+      });
+      for (const side of [-1, 1] as const) {
+        const braid = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.055, 0.042, 0.24, 8),
+          hairMat
+        );
+        braid.position.set(side * 0.23, 0.2, -0.04);
+        braid.rotation.z = side * 0.22;
+        headGroup.add(braid);
+
+        const ribbon = new THREE.Mesh(
+          new THREE.SphereGeometry(0.045, 8, 8),
+          ribbonMat
+        );
+        ribbon.position.set(side * 0.22, 0.31, -0.02);
+        headGroup.add(ribbon);
+      }
     }
   }
 
@@ -915,6 +1131,11 @@ function buildHumanRig(
     heldPlateMesh: heldVisual.plateMesh,
     heldSamosaMesh: heldVisual.samosaMesh,
     heldPakoraMesh: heldVisual.pakoraMesh,
+    heldSodaGroup: heldVisual.sodaGroup,
+    heldSodaIceCollar: heldVisual.sodaIceCollar,
+    heldConeGroup: heldVisual.coneGroup,
+    heldConeScoop: heldVisual.coneScoop,
+    heldConeIceRing: heldVisual.coneIceRing,
     carriedChairMesh,
     carriedTableMesh,
   };
@@ -928,7 +1149,8 @@ function animateRigPose(
   isDrinking: boolean,
   drinkPhase: number,
   idleClock: number,
-  dt: number
+  dt: number,
+  isMarketing = false
 ): void {
   if (isSitting) {
     rig.leftHipPivot.rotation.x = THREE.MathUtils.damp(
@@ -1002,24 +1224,27 @@ function animateRigPose(
       14,
       dt
     );
+    const bounceY = isMarketing
+      ? Math.abs(Math.sin(idleClock * 2.8)) * 0.045
+      : Math.sin(idleClock * 1.8) * 0.008;
     rig.bodyGroup.position.y = THREE.MathUtils.damp(
       rig.bodyGroup.position.y,
-      Math.sin(idleClock * 1.8) * 0.008,
-      10,
+      bounceY,
+      12,
       dt
     );
     rig.bodyGroup.rotation.z = THREE.MathUtils.damp(
       rig.bodyGroup.rotation.z,
-      0,
+      isMarketing ? Math.sin(idleClock * 2.8) * 0.05 : 0,
       14,
       dt
     );
   }
 
-  // Expressive Drinking / Eating + Natural Head Animation
+  // Expressive Drinking / Eating, Energetic 3D Marketing Waving, or Natural Idle Motion
   if (isDrinking) {
-    const sip = (Math.sin(drinkPhase) + 1) * 0.5; // 0..1 smooth lift-and-sip rhythm
-    const armLiftX = -1.25 - sip * 0.85; // lifts right hand cleanly up to mouth!
+    const sip = (Math.sin(drinkPhase) + 1) * 0.5;
+    const armLiftX = -1.25 - sip * 0.85;
     rig.rightShoulderPivot.rotation.x = THREE.MathUtils.damp(
       rig.rightShoulderPivot.rotation.x,
       armLiftX,
@@ -1044,6 +1269,12 @@ function animateRigPose(
       12,
       dt
     );
+    rig.leftShoulderPivot.rotation.z = THREE.MathUtils.damp(
+      rig.leftShoulderPivot.rotation.z,
+      0,
+      12,
+      dt
+    );
 
     rig.headGroup.rotation.x = THREE.MathUtils.damp(
       rig.headGroup.rotation.x,
@@ -1063,7 +1294,64 @@ function animateRigPose(
       12,
       dt
     );
+  } else if (isMarketing && !isMoving && !isSitting) {
+    const wave = Math.sin(idleClock * 5.4);
+    const sway = Math.cos(idleClock * 5.4);
+    rig.leftShoulderPivot.rotation.x = THREE.MathUtils.damp(
+      rig.leftShoulderPivot.rotation.x,
+      -2.18 + wave * 0.42,
+      14,
+      dt
+    );
+    rig.leftShoulderPivot.rotation.z = THREE.MathUtils.damp(
+      rig.leftShoulderPivot.rotation.z,
+      -0.36 - sway * 0.28,
+      14,
+      dt
+    );
+    rig.rightShoulderPivot.rotation.x = THREE.MathUtils.damp(
+      rig.rightShoulderPivot.rotation.x,
+      -2.18 - wave * 0.42,
+      14,
+      dt
+    );
+    rig.rightShoulderPivot.rotation.z = THREE.MathUtils.damp(
+      rig.rightShoulderPivot.rotation.z,
+      0.36 + sway * 0.28,
+      14,
+      dt
+    );
+    rig.rightShoulderPivot.rotation.y = THREE.MathUtils.damp(
+      rig.rightShoulderPivot.rotation.y,
+      0,
+      12,
+      dt
+    );
+    rig.headGroup.rotation.x = THREE.MathUtils.damp(
+      rig.headGroup.rotation.x,
+      -0.06,
+      12,
+      dt
+    );
+    rig.headGroup.rotation.z = THREE.MathUtils.damp(
+      rig.headGroup.rotation.z,
+      wave * 0.07,
+      12,
+      dt
+    );
+    rig.headGroup.rotation.y = THREE.MathUtils.damp(
+      rig.headGroup.rotation.y,
+      Math.sin(idleClock * 2.3) * 0.44,
+      10,
+      dt
+    );
   } else {
+    rig.leftShoulderPivot.rotation.z = THREE.MathUtils.damp(
+      rig.leftShoulderPivot.rotation.z,
+      0,
+      12,
+      dt
+    );
     rig.rightShoulderPivot.rotation.z = THREE.MathUtils.damp(
       rig.rightShoulderPivot.rotation.z,
       0,
@@ -2129,16 +2417,827 @@ function buildSnacksCartGroup(
   };
 }
 
+interface ColdCartVisuals {
+  group: THREE.Group;
+  plotSignGroup: THREE.Group;
+  awningGroup: THREE.Group;
+  iceBlockStockMeshes: THREE.Mesh[];
+  sodaStockMeshes: THREE.Mesh[];
+  coneStockMeshes: THREE.Mesh[];
+  mixFillMesh: THREE.Mesh;
+  chillerCoil: THREE.Mesh;
+  chillerItemMesh: THREE.Mesh;
+  steamPuffs: THREE.Mesh[];
+  trayVisuals: Array<ReturnType<typeof buildHeldItemVisualGroup>>;
+}
+
+function buildColdCartGroup(
+  woodTex: THREE.CanvasTexture,
+  maxAniso: number
+): ColdCartVisuals {
+  const group = new THREE.Group();
+  group.position.set(COLD_CART_ANCHOR.x, 0, COLD_CART_ANCHOR.z);
+
+  const frameMat = new THREE.MeshStandardMaterial({
+    color: 0x0f172a,
+    metalness: 0.72,
+    roughness: 0.3,
+  });
+  const bluePaintMat = new THREE.MeshStandardMaterial({
+    color: 0x0284c7,
+    roughness: 0.38,
+  });
+  const chromeMat = new THREE.MeshStandardMaterial({
+    color: 0xe2e8f0,
+    metalness: 0.9,
+    roughness: 0.16,
+  });
+  const tireMat = new THREE.MeshStandardMaterial({
+    color: 0x171717,
+    roughness: 0.9,
+  });
+  const woodMat = new THREE.MeshStandardMaterial({
+    map: woodTex,
+    roughness: 0.78,
+  });
+
+  // 4 Spoked Wheels + Axles
+  for (const [wx, wz] of [
+    [-2.0, -0.76],
+    [-2.0, 0.76],
+    [2.0, -0.76],
+    [2.0, 0.76],
+  ]) {
+    const wg = new THREE.Group();
+    wg.position.set(wx, 0.36, wz);
+    const tire = new THREE.Mesh(
+      new THREE.TorusGeometry(0.36, 0.06, 12, 24),
+      tireMat
+    );
+    tire.castShadow = true;
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(0.285, 0.024, 8, 22),
+      chromeMat
+    );
+    const hub = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.055, 0.055, 0.14, 10),
+      bluePaintMat
+    );
+    hub.rotation.x = Math.PI / 2;
+    wg.add(tire, rim, hub);
+    for (let s = 0; s < 8; s++) {
+      const sp = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.011, 0.011, 0.56, 6),
+        frameMat
+      );
+      sp.rotation.z = (s * Math.PI) / 8;
+      wg.add(sp);
+    }
+    group.add(wg);
+  }
+
+  for (const ax of [-2.0, 2.0]) {
+    const axle = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.03, 0.03, 1.6, 10),
+      chromeMat
+    );
+    axle.rotation.x = Math.PI / 2;
+    axle.position.set(ax, 0.36, 0);
+    group.add(axle);
+  }
+
+  const cabinet = new THREE.Mesh(
+    new THREE.BoxGeometry(4.6, 0.38, 1.46),
+    bluePaintMat
+  );
+  cabinet.position.set(0, 0.68, 0);
+  cabinet.castShadow = true;
+  cabinet.receiveShadow = true;
+  group.add(cabinet);
+
+  const deck = new THREE.Mesh(
+    new THREE.BoxGeometry(4.8, 0.12, 1.64),
+    chromeMat
+  );
+  deck.position.set(0, 0.89, 0);
+  deck.castShadow = true;
+  deck.receiveShadow = true;
+  group.add(deck);
+
+  for (const rz of [-0.79, 0.79]) {
+    const rail = new THREE.Mesh(
+      new THREE.BoxGeometry(4.82, 0.04, 0.04),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.55 })
+    );
+    rail.position.set(0, 0.96, rz);
+    group.add(rail);
+  }
+
+  const signTex = makeShopSignTexture(
+    'ICE COLD DRINKS & ICE CREAM',
+    'COLD DRINK $0.75 · ICE CREAM $0.90',
+    '#0284C7',
+    maxAniso
+  );
+  const signBoard = new THREE.Mesh(
+    new THREE.PlaneGeometry(3.4, 0.34),
+    new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.45 })
+  );
+  signBoard.position.set(0, 0.7, 0.745);
+  group.add(signBoard);
+
+  for (const [px, pz] of [
+    [-2.25, -0.7],
+    [-2.25, 0.7],
+    [2.25, -0.7],
+    [2.25, 0.7],
+  ]) {
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.032, 0.032, 1.52, 8),
+      chromeMat
+    );
+    post.position.set(px, 1.66, pz);
+    post.castShadow = true;
+    group.add(post);
+  }
+
+  const awningGroup = new THREE.Group();
+  const roof = new THREE.Mesh(
+    new THREE.BoxGeometry(4.86, 0.09, 1.82),
+    bluePaintMat
+  );
+  roof.position.set(0, 2.42, 0);
+  roof.castShadow = true;
+  awningGroup.add(roof);
+  for (let s = 0; s < 4; s++) {
+    const stripe = new THREE.Mesh(
+      new THREE.BoxGeometry(0.52, 0.11, 1.84),
+      new THREE.MeshStandardMaterial({ color: 0xe0f2fe, roughness: 0.55 })
+    );
+    stripe.position.set(-1.65 + s * 1.1, 2.43, 0);
+    awningGroup.add(stripe);
+  }
+  group.add(awningGroup);
+
+  const lx = (wx: number) => wx - COLD_CART_ANCHOR.x;
+  const lz = (wz: number) => wz - COLD_CART_ANCHOR.z;
+
+  // 1. Electric Ice Chiller Drum
+  const cx = lx(COLD_STATIONS.chiller.x);
+  const cz = lz(COLD_STATIONS.chiller.z);
+  const chillerBase = new THREE.Mesh(
+    new THREE.BoxGeometry(0.62, 0.24, 0.58),
+    frameMat
+  );
+  chillerBase.position.set(cx, 1.07, cz);
+  group.add(chillerBase);
+
+  const chillerBody = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.24, 0.24, 0.34, 18),
+    chromeMat
+  );
+  chillerBody.position.set(cx, 1.28, cz);
+  chillerBody.castShadow = true;
+  group.add(chillerBody);
+
+  const chillerCoil = new THREE.Mesh(
+    new THREE.TorusGeometry(0.245, 0.028, 8, 20),
+    new THREE.MeshStandardMaterial({
+      color: 0x38bdf8,
+      emissive: 0x0284c7,
+      emissiveIntensity: 2.0,
+    })
+  );
+  chillerCoil.rotation.x = Math.PI / 2;
+  chillerCoil.position.set(cx, 1.44, cz);
+  chillerCoil.visible = false;
+  group.add(chillerCoil);
+
+  const chillerItemMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 0.18, 12),
+    new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.25 })
+  );
+  chillerItemMesh.position.set(cx, 1.46, cz);
+  chillerItemMesh.visible = false;
+  group.add(chillerItemMesh);
+
+  const steamPuffs: THREE.Mesh[] = [];
+  const frostMat = new THREE.MeshStandardMaterial({
+    color: 0xe0f2fe,
+    transparent: true,
+    opacity: 0.65,
+    roughness: 0.9,
+  });
+  for (let i = 0; i < 3; i++) {
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), frostMat);
+    puff.position.set(cx, 1.54 + i * 0.18, cz);
+    puff.visible = false;
+    group.add(puff);
+    steamPuffs.push(puff);
+  }
+
+  // 2. Crushed Ice Blocks Insulated Cooler Box
+  const ix = lx(COLD_STATIONS.ice_box.x);
+  const iz = lz(COLD_STATIONS.ice_box.z);
+  const iceBoxBody = new THREE.Mesh(
+    new THREE.BoxGeometry(0.58, 0.22, 0.46),
+    new THREE.MeshStandardMaterial({ color: 0x0369a1, roughness: 0.45 })
+  );
+  iceBoxBody.position.set(ix, 1.06, iz);
+  group.add(iceBoxBody);
+  const iceBlockStockMeshes: THREE.Mesh[] = [];
+  const iceCubeMat = new THREE.MeshStandardMaterial({
+    color: 0xbae6fd,
+    emissive: 0x0ea5e9,
+    emissiveIntensity: 0.25,
+    transparent: true,
+    opacity: 0.86,
+    roughness: 0.15,
+  });
+  for (let i = 0; i < 6; i++) {
+    const cube = new THREE.Mesh(
+      new THREE.BoxGeometry(0.11, 0.1, 0.11),
+      iceCubeMat
+    );
+    cube.position.set(
+      ix - 0.14 + (i % 3) * 0.14,
+      1.19,
+      iz + (i < 3 ? -0.08 : 0.08)
+    );
+    group.add(cube);
+    iceBlockStockMeshes.push(cube);
+  }
+
+  // 3. Cold Drink Bottles Crate
+  const sx = lx(COLD_STATIONS.soda_crate.x);
+  const sz = lz(COLD_STATIONS.soda_crate.z);
+  const crateBox = new THREE.Mesh(
+    new THREE.BoxGeometry(0.58, 0.16, 0.44),
+    new THREE.MeshStandardMaterial({ color: 0x1d4ed8, roughness: 0.55 })
+  );
+  crateBox.position.set(sx, 1.03, sz);
+  group.add(crateBox);
+  const sodaStockMeshes: THREE.Mesh[] = [];
+  const bottleStockMat = new THREE.MeshStandardMaterial({
+    color: 0x0ea5e9,
+    roughness: 0.25,
+  });
+  for (let i = 0; i < 6; i++) {
+    const b = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.042, 0.046, 0.18, 10),
+      bottleStockMat
+    );
+    b.position.set(
+      sx - 0.15 + (i % 3) * 0.15,
+      1.16,
+      sz + (i < 3 ? -0.09 : 0.09)
+    );
+    group.add(b);
+    sodaStockMeshes.push(b);
+  }
+
+  // 4. Creamy Ice Cream Mix Tub
+  const mx = lx(COLD_STATIONS.icecream_tub.x);
+  const mz = lz(COLD_STATIONS.icecream_tub.z);
+  const tubMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22, 0.18, 0.22, 16),
+    chromeMat
+  );
+  tubMesh.position.set(mx, 1.06, mz);
+  group.add(tubMesh);
+  const mixFillMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.19, 0.18, 0.06, 16),
+    new THREE.MeshStandardMaterial({ color: 0xfbcfe8, roughness: 0.4 })
+  );
+  mixFillMesh.position.set(mx, 1.15, mz);
+  group.add(mixFillMesh);
+
+  // 5. Waffle Cones Stack
+  const wcx = lx(COLD_STATIONS.cone_stack.x);
+  const wcz = lz(COLD_STATIONS.cone_stack.z);
+  const coneStand = new THREE.Mesh(
+    new THREE.BoxGeometry(0.46, 0.08, 0.36),
+    chromeMat
+  );
+  coneStand.position.set(wcx, 0.99, wcz);
+  group.add(coneStand);
+  const coneStockMeshes: THREE.Mesh[] = [];
+  const coneStockMat = new THREE.MeshStandardMaterial({
+    color: 0xd97706,
+    roughness: 0.78,
+  });
+  for (let i = 0; i < 6; i++) {
+    const cm = new THREE.Mesh(
+      new THREE.ConeGeometry(0.045, 0.15, 10),
+      coneStockMat
+    );
+    cm.rotation.x = Math.PI;
+    cm.position.set(
+      wcx - 0.12 + (i % 3) * 0.12,
+      1.11,
+      wcz + (i < 3 ? -0.07 : 0.07)
+    );
+    group.add(cm);
+    coneStockMeshes.push(cm);
+  }
+
+  // 6. Two Cold Showcase Trays
+  const trayVisuals: Array<ReturnType<typeof buildHeldItemVisualGroup>> = [];
+  for (const spot of COLD_TRAY_SPOTS) {
+    const tx = lx(spot.x);
+    const tz = lz(spot.z);
+    const rim = new THREE.Mesh(
+      new THREE.BoxGeometry(0.95, 0.016, 0.56),
+      bluePaintMat
+    );
+    rim.position.set(tx, 0.95, tz);
+    const inlay = new THREE.Mesh(
+      new THREE.BoxGeometry(0.86, 0.02, 0.48),
+      new THREE.MeshStandardMaterial({ color: 0xe0f2fe, roughness: 0.35 })
+    );
+    inlay.position.set(tx, 0.954, tz);
+    group.add(rim, inlay);
+
+    const tv = buildHeldItemVisualGroup();
+    tv.group.position.set(tx, 1.07, tz);
+    group.add(tv.group);
+    trayVisuals.push(tv);
+  }
+
+  // Reserved 3rd Readi Plot Board
+  const plotSignGroup = new THREE.Group();
+  plotSignGroup.position.set(COLD_CART_ANCHOR.x, 0.11, COLD_CART_ANCHOR.z);
+  const outline = new THREE.Mesh(
+    new THREE.BoxGeometry(4.6, 0.025, 1.6),
+    new THREE.MeshStandardMaterial({
+      color: 0xbae6fd,
+      transparent: true,
+      opacity: 0.35,
+      roughness: 0.85,
+    })
+  );
+  outline.position.y = 0.015;
+  const post = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.055, 0.065, 1.35, 8),
+    woodMat
+  );
+  post.position.y = 0.68;
+  post.castShadow = true;
+  const plotTex = makeShopSignTexture(
+    '3RD READI SPACE',
+    `COLD DRINKS & ICE CREAM · ${formatMoney(COLD_CART_PRICE_CENTS)}`,
+    '#0284C7',
+    maxAniso
+  );
+  const board = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.68, 0.08), [
+    woodMat,
+    woodMat,
+    woodMat,
+    woodMat,
+    new THREE.MeshStandardMaterial({ map: plotTex, roughness: 0.45 }),
+    woodMat,
+  ]);
+  board.position.y = 1.35;
+  board.castShadow = true;
+  plotSignGroup.add(outline, post, board);
+
+  return {
+    group,
+    plotSignGroup,
+    awningGroup,
+    iceBlockStockMeshes,
+    sodaStockMeshes,
+    coneStockMeshes,
+    mixFillMesh,
+    chillerCoil,
+    chillerItemMesh,
+    steamPuffs,
+    trayVisuals,
+  };
+}
+
+interface ShopKitchenVisuals {
+  group: THREE.Group;
+  cupMeshes: THREE.Mesh[];
+  coffeeJarGroup: THREE.Group;
+  milkCrateGroup: THREE.Group;
+  milkPacketMeshes: THREE.Mesh[];
+  biscuitStockMeshes: THREE.Mesh[];
+  cupcakeStockMeshes: THREE.Group[];
+  waterFillMesh: THREE.Mesh;
+  trayVisuals: Array<ReturnType<typeof buildHeldItemVisualGroup>>;
+  kettleGroup: THREE.Group;
+  burnerFlame: THREE.Mesh;
+  kettleCupMesh: THREE.Mesh;
+  steamPuffs: THREE.Mesh[];
+}
+
+function buildShopKitchenGroup(
+  b: RentableBuildingConfig,
+  woodTex: THREE.CanvasTexture
+): { group: THREE.Group; visuals: ShopKitchenVisuals } {
+  const group = new THREE.Group();
+  const kb = getShopKitchenBounds(b);
+  const ks = getShopKitchenStations(b);
+
+  const kw = kb.maxX - kb.minX;
+  const kd = kb.maxZ - kb.minZ;
+  const kcx = (kb.minX + kb.maxX) / 2;
+  const kcz = (kb.minZ + kb.maxZ) / 2;
+
+  const steelMat = new THREE.MeshStandardMaterial({
+    color: 0xcbd5e1,
+    metalness: 0.55,
+    roughness: 0.32,
+  });
+  const counterBodyMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    roughness: 0.65,
+  });
+  const woodMat = new THREE.MeshStandardMaterial({
+    map: woodTex,
+    roughness: 0.72,
+  });
+  const frameMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    metalness: 0.7,
+    roughness: 0.35,
+  });
+  const brassMat = new THREE.MeshStandardMaterial({
+    color: 0xd97706,
+    metalness: 0.75,
+    roughness: 0.25,
+  });
+
+  // Kitchen Counter Base & Top Deck
+  const cabinet = new THREE.Mesh(
+    new THREE.BoxGeometry(kw, 0.82, kd),
+    counterBodyMat
+  );
+  cabinet.position.set(kcx, 0.52, kcz);
+  cabinet.castShadow = true;
+  cabinet.receiveShadow = true;
+  group.add(cabinet);
+
+  const deck = new THREE.Mesh(
+    new THREE.BoxGeometry(kw + 0.1, 0.08, kd + 0.1),
+    woodMat
+  );
+  deck.position.set(kcx, 0.96, kcz);
+  deck.castShadow = true;
+  deck.receiveShadow = true;
+  group.add(deck);
+
+  const frontRail = new THREE.Mesh(
+    new THREE.BoxGeometry(kw + 0.08, 0.035, 0.04),
+    steelMat
+  );
+  frontRail.position.set(kcx, 1.01, kb.maxZ + 0.02);
+  group.add(frontRail);
+
+  // 3 Serving Trays along front edge of indoor kitchen counter
+  const trayVisuals: Array<ReturnType<typeof buildHeldItemVisualGroup>> = [];
+  for (const spot of ks.trays) {
+    const trayRim = new THREE.Mesh(
+      new THREE.BoxGeometry(0.82, 0.014, 0.46),
+      brassMat
+    );
+    trayRim.position.set(spot.x, 1.005, spot.z);
+    group.add(trayRim);
+
+    const trayInlay = new THREE.Mesh(
+      new THREE.BoxGeometry(0.76, 0.018, 0.4),
+      new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.45 })
+    );
+    trayInlay.position.set(spot.x, 1.008, spot.z);
+    group.add(trayInlay);
+
+    const trayVis = buildHeldItemVisualGroup();
+    trayVis.group.position.set(spot.x, 1.12, spot.z);
+    group.add(trayVis.group);
+    trayVisuals.push(trayVis);
+  }
+
+  // Cupcake Display Box
+  const cupcakeBoxGroup = new THREE.Group();
+  cupcakeBoxGroup.position.set(ks.cupcake_box.x, 1.08, ks.cupcake_box.z);
+  const cupcakeBase = new THREE.Mesh(
+    new THREE.BoxGeometry(0.46, 0.14, 0.44),
+    new THREE.MeshStandardMaterial({ color: 0xfda4af, roughness: 0.65 })
+  );
+  cupcakeBase.castShadow = true;
+  const cupcakeGlass = new THREE.Mesh(
+    new THREE.BoxGeometry(0.44, 0.16, 0.42),
+    new THREE.MeshStandardMaterial({
+      color: 0xe0f2fe,
+      transparent: true,
+      opacity: 0.35,
+      roughness: 0.15,
+    })
+  );
+  cupcakeGlass.position.y = 0.14;
+  cupcakeBoxGroup.add(cupcakeBase, cupcakeGlass);
+
+  const cupcakeStockMeshes: THREE.Group[] = [];
+  for (let i = 0; i < 6; i++) {
+    const cg = new THREE.Group();
+    const liner = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.036, 0.065, 10),
+      new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.75 })
+    );
+    const frost = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 10, 8),
+      new THREE.MeshStandardMaterial({
+        color: i % 2 === 0 ? 0xf472b6 : 0xfbbf24,
+        roughness: 0.45,
+      })
+    );
+    frost.position.y = 0.04;
+    cg.add(liner, frost);
+    cg.position.set(-0.12 + (i % 3) * 0.12, 0.1, i < 3 ? -0.09 : 0.09);
+    cupcakeBoxGroup.add(cg);
+    cupcakeStockMeshes.push(cg);
+  }
+  group.add(cupcakeBoxGroup);
+
+  // Biscuit Box
+  const biscuitBoxGroup = new THREE.Group();
+  biscuitBoxGroup.position.set(ks.biscuit_box.x, 1.07, ks.biscuit_box.z);
+  const biscuitTray = new THREE.Mesh(
+    new THREE.BoxGeometry(0.46, 0.12, 0.44),
+    new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.7 })
+  );
+  biscuitTray.castShadow = true;
+  biscuitBoxGroup.add(biscuitTray);
+
+  const biscuitStockMeshes: THREE.Mesh[] = [];
+  const biscuitGeo = new THREE.BoxGeometry(0.11, 0.08, 0.15);
+  const biscuitMat = new THREE.MeshStandardMaterial({
+    color: 0xdc2626,
+    roughness: 0.45,
+  });
+  for (let i = 0; i < 6; i++) {
+    const bm = new THREE.Mesh(biscuitGeo, biscuitMat);
+    bm.position.set(-0.12 + (i % 3) * 0.12, 0.09, i < 3 ? -0.09 : 0.09);
+    biscuitBoxGroup.add(bm);
+    biscuitStockMeshes.push(bm);
+  }
+  group.add(biscuitBoxGroup);
+
+  // Cup Basket
+  const basket = new THREE.Mesh(
+    new THREE.BoxGeometry(0.46, 0.22, 0.46),
+    new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.85 })
+  );
+  basket.position.set(ks.cups.x, 1.0, ks.cups.z);
+  basket.castShadow = true;
+  group.add(basket);
+
+  const cupMeshes: THREE.Mesh[] = [];
+  const cupGeo = new THREE.CylinderGeometry(0.058, 0.045, 0.13, 10);
+  const cupMat = new THREE.MeshStandardMaterial({
+    color: 0xfffdf9,
+    roughness: 0.55,
+  });
+  for (let i = 0; i < 20; i++) {
+    const stackIdx = Math.floor(i / 10);
+    const heightIdx = i % 10;
+    const cm = new THREE.Mesh(cupGeo, cupMat);
+    cm.position.set(
+      ks.cups.x + (stackIdx === 0 ? -0.095 : 0.095),
+      1.09 + heightIdx * 0.032,
+      ks.cups.z
+    );
+    group.add(cm);
+    cupMeshes.push(cm);
+  }
+
+  // Tea Leaves Tin
+  const teaTin = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.145, 0.145, 0.32, 16),
+    new THREE.MeshStandardMaterial({
+      color: 0x15803d,
+      roughness: 0.45,
+      metalness: 0.25,
+    })
+  );
+  teaTin.position.set(ks.tea_tin.x, 1.15, ks.tea_tin.z);
+  teaTin.castShadow = true;
+  group.add(teaTin);
+
+  const teaLid = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.155, 0.155, 0.045, 16),
+    brassMat
+  );
+  teaLid.position.set(ks.tea_tin.x, 1.32, ks.tea_tin.z);
+  group.add(teaLid);
+
+  // Coffee Beans Jar
+  const coffeeJarGroup = new THREE.Group();
+  coffeeJarGroup.position.set(ks.coffee_jar.x, 1.14, ks.coffee_jar.z);
+  const coffeeJar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.135, 0.135, 0.28, 16),
+    new THREE.MeshStandardMaterial({
+      color: 0x451a03,
+      roughness: 0.4,
+      metalness: 0.2,
+    })
+  );
+  coffeeJar.castShadow = true;
+  const coffeeLid = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.145, 0.145, 0.045, 16),
+    new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.45 })
+  );
+  coffeeLid.position.y = 0.15;
+  coffeeJarGroup.add(coffeeJar, coffeeLid);
+  group.add(coffeeJarGroup);
+
+  // Sugar Jar
+  const sugarJar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.14, 0.14, 0.28, 16),
+    new THREE.MeshStandardMaterial({
+      color: 0xe0f2fe,
+      transparent: true,
+      opacity: 0.72,
+      roughness: 0.15,
+    })
+  );
+  sugarJar.position.set(ks.sugar_jar.x, 1.14, ks.sugar_jar.z);
+  group.add(sugarJar);
+
+  const sugarInside = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.115, 0.115, 0.16, 12),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 })
+  );
+  sugarInside.position.set(ks.sugar_jar.x, 1.08, ks.sugar_jar.z);
+  group.add(sugarInside);
+
+  // Water Jug
+  const waterShell = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.155, 0.155, 0.36, 16),
+    new THREE.MeshStandardMaterial({
+      color: 0xbae6fd,
+      transparent: true,
+      opacity: 0.45,
+      roughness: 0.12,
+    })
+  );
+  waterShell.position.set(ks.water_jug.x, 1.18, ks.water_jug.z);
+  group.add(waterShell);
+
+  const waterFillMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.135, 0.135, 0.3, 14),
+    new THREE.MeshStandardMaterial({
+      color: 0x0284c7,
+      transparent: true,
+      opacity: 0.85,
+      roughness: 0.18,
+    })
+  );
+  waterFillMesh.position.set(ks.water_jug.x, 1.0, ks.water_jug.z);
+  group.add(waterFillMesh);
+
+  const waterCap = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.095, 0.105, 0.055, 12),
+    new THREE.MeshStandardMaterial({ color: 0x0369a1, roughness: 0.5 })
+  );
+  waterCap.position.set(ks.water_jug.x, 1.38, ks.water_jug.z);
+  group.add(waterCap);
+
+  // Milk Packets Crate
+  const milkCrateGroup = new THREE.Group();
+  milkCrateGroup.position.set(ks.milk_crate.x, 1.1, ks.milk_crate.z);
+  const crateBox = new THREE.Mesh(
+    new THREE.BoxGeometry(0.36, 0.18, 0.36),
+    new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.7 })
+  );
+  crateBox.castShadow = true;
+  milkCrateGroup.add(crateBox);
+
+  const milkPacketMeshes: THREE.Mesh[] = [];
+  const packetGeo = new THREE.BoxGeometry(0.1, 0.14, 0.075);
+  const packetMat = new THREE.MeshStandardMaterial({
+    color: 0xf8fafc,
+    roughness: 0.4,
+  });
+  for (let i = 0; i < 4; i++) {
+    const pm = new THREE.Mesh(packetGeo, packetMat);
+    pm.position.set(i % 2 === 0 ? -0.08 : 0.08, 0.11, i < 2 ? -0.08 : 0.08);
+    milkCrateGroup.add(pm);
+    milkPacketMeshes.push(pm);
+  }
+  group.add(milkCrateGroup);
+
+  // Kettle Stove
+  const stoveBase = new THREE.Mesh(
+    new THREE.BoxGeometry(0.46, 0.14, 0.46),
+    frameMat
+  );
+  stoveBase.position.set(ks.kettle.x, 1.07, ks.kettle.z);
+  group.add(stoveBase);
+
+  const burnerFlame = new THREE.Mesh(
+    new THREE.TorusGeometry(0.14, 0.028, 8, 18),
+    new THREE.MeshStandardMaterial({
+      color: 0x38bdf8,
+      emissive: 0x0284c7,
+      emissiveIntensity: 2.2,
+    })
+  );
+  burnerFlame.rotation.x = Math.PI / 2;
+  burnerFlame.position.set(ks.kettle.x, 1.15, ks.kettle.z);
+  burnerFlame.visible = false;
+  group.add(burnerFlame);
+
+  const kettleGroup = new THREE.Group();
+  kettleGroup.position.set(ks.kettle.x, 1.16, ks.kettle.z);
+
+  const kettleBody = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.14, 0.18, 0.28, 16),
+    brassMat
+  );
+  kettleBody.position.y = 0.14;
+  kettleBody.castShadow = true;
+  kettleGroup.add(kettleBody);
+
+  const kettleLid = new THREE.Mesh(
+    new THREE.SphereGeometry(0.105, 12, 8),
+    brassMat
+  );
+  kettleLid.position.y = 0.28;
+  kettleGroup.add(kettleLid);
+
+  const spout = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.028, 0.04, 0.2, 8),
+    brassMat
+  );
+  spout.position.set(0.16, 0.2, 0);
+  spout.rotation.z = -0.65;
+  kettleGroup.add(spout);
+
+  const kettleHandle = new THREE.Mesh(
+    new THREE.TorusGeometry(0.14, 0.018, 8, 16, Math.PI),
+    frameMat
+  );
+  kettleHandle.position.y = 0.26;
+  kettleGroup.add(kettleHandle);
+  group.add(kettleGroup);
+
+  const kettleCupMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.075, 0.055, 0.15, 12),
+    new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.4 })
+  );
+  kettleCupMesh.position.set(ks.kettle.x + 0.26, 1.1, ks.kettle.z + 0.14);
+  kettleCupMesh.visible = false;
+  group.add(kettleCupMesh);
+
+  const steamPuffs: THREE.Mesh[] = [];
+  const steamMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.65,
+    roughness: 1,
+  });
+  for (let i = 0; i < 4; i++) {
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(0.085, 8, 8), steamMat);
+    puff.position.set(ks.kettle.x, 1.56 + i * 0.18, ks.kettle.z);
+    puff.visible = false;
+    group.add(puff);
+    steamPuffs.push(puff);
+  }
+
+  return {
+    group,
+    visuals: {
+      group,
+      cupMeshes,
+      coffeeJarGroup,
+      milkCrateGroup,
+      milkPacketMeshes,
+      biscuitStockMeshes,
+      cupcakeStockMeshes,
+      waterFillMesh,
+      trayVisuals,
+      kettleGroup,
+      burnerFlame,
+      kettleCupMesh,
+      steamPuffs,
+    },
+  };
+}
+
 interface RentableBuildingVisuals {
   id: ShopBuildingId;
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
   roofGroup: THREE.Group;
   rentedBanner: THREE.Mesh;
   ownerRig: CharacterRig;
+  kitchen: ShopKitchenVisuals;
 }
 
 function buildRentableBuildings(
   scene: THREE.Scene,
+  woodTex: THREE.CanvasTexture,
   maxAniso: number
 ): RentableBuildingVisuals[] {
   const results: RentableBuildingVisuals[] = [];
@@ -2243,7 +3342,7 @@ function buildRentableBuildings(
       group.add(rfw);
     }
 
-    // Doorframe Pillars + Warm Interior Glow Bar
+    // Doorframe Pillars + Warm Interior Glow Bars
     for (const px of [b.doorMinX, b.doorMaxX]) {
       const pillar = new THREE.Mesh(
         new THREE.BoxGeometry(0.2, 3.0, 0.26),
@@ -2260,18 +3359,25 @@ function buildRentableBuildings(
     glowBar.position.set(cx, 2.9, minZ + 0.28);
     group.add(glowBar);
 
+    const sideGlow = new THREE.Mesh(
+      new THREE.BoxGeometry(0.14, 0.1, d - 1.2),
+      glowStripMat
+    );
+    sideGlow.position.set(minX + 0.28, 2.86, cz);
+    group.add(sideGlow);
+
     const accentHex = `#${b.awningHex.toString(16).padStart(6, '0')}`;
     const signTex = makeShopSignTexture(
       b.shopName.toUpperCase(),
-      `OWNER: ${b.ownerName.toUpperCase()} · ${formatMoney(b.weeklyRentCents)}/WK`,
+      `OWNER: ${b.ownerName.toUpperCase()} · ${formatMoney(b.weeklyRentCents)}/WK · EMPTY FLOOR FOR RENT`,
       accentHex,
       maxAniso
     );
     const innerSign = new THREE.Mesh(
-      new THREE.PlaneGeometry(Math.min(4.8, w - 0.9), 0.92),
+      new THREE.PlaneGeometry(Math.min(5.2, w - 1.2), 0.92),
       new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.42 })
     );
-    innerSign.position.set(cx, 2.34, minZ + 0.16);
+    innerSign.position.set(b.counterPos.x + 0.8, 2.34, minZ + 0.16);
     group.add(innerSign);
 
     // Interior Owner Desk / Counter + Ledger Book
@@ -2291,6 +3397,10 @@ function buildRentableBuildings(
     ledger.position.set(b.counterPos.x + 0.35, 1.0, b.counterPos.z + 0.06);
     ledger.rotation.y = -0.2;
     group.add(ledger);
+
+    // Built-in Indoor Cafe Kitchen on Right-Back Half of Shop
+    const builtKitchen = buildShopKitchenGroup(b, woodTex);
+    group.add(builtKitchen.group);
 
     // Auto-Hiding Roof + Front Awning + Roof Signboard
     const roofGroup = new THREE.Group();
@@ -2312,10 +3422,10 @@ function buildRentableBuildings(
     roofGroup.add(frontAwning);
 
     const roofSign = new THREE.Mesh(
-      new THREE.PlaneGeometry(Math.min(5.2, w - 0.6), 1.05),
+      new THREE.PlaneGeometry(Math.min(6.4, w - 0.8), 1.15),
       new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.42 })
     );
-    roofSign.position.set(cx, 3.76, maxZ + 0.15);
+    roofSign.position.set(cx, 3.82, maxZ + 0.15);
     roofGroup.add(roofSign);
 
     group.add(roofGroup);
@@ -2323,7 +3433,7 @@ function buildRentableBuildings(
     // "RENTED SHOP" gold plaque visible on front counter when leased by player
     const rentedTex = makeShopSignTexture(
       'RENTED BY YOU',
-      'WEEKLY SHOP LEASE ACTIVE',
+      'KITCHEN & DINING OPEN',
       '#15803D',
       maxAniso
     );
@@ -2348,10 +3458,465 @@ function buildRentableBuildings(
       roofGroup,
       rentedBanner,
       ownerRig,
+      kitchen: builtKitchen.visuals,
     });
   }
 
   return results;
+}
+
+interface BuyerShopVisuals {
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
+  roofGroup: THREE.Group;
+  buyerRig: CharacterRig;
+}
+
+function buildBuyerShopGroup(
+  scene: THREE.Scene,
+  maxAniso: number
+): BuyerShopVisuals {
+  const group = new THREE.Group();
+  const { minX, maxX, minZ, maxZ } = BUYER_SHOP.bounds;
+  const w = maxX - minX;
+  const d = maxZ - minZ;
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+
+  const floorMat = new THREE.MeshStandardMaterial({
+    color: 0xf8f5ff,
+    roughness: 0.64,
+  });
+  const wallMat = new THREE.MeshStandardMaterial({
+    color: BUYER_SHOP.wallHex,
+    roughness: 0.84,
+  });
+  const awningMat = new THREE.MeshStandardMaterial({
+    color: BUYER_SHOP.awningHex,
+    roughness: 0.6,
+  });
+  const woodMat = new THREE.MeshStandardMaterial({
+    color: 0x78350f,
+    roughness: 0.72,
+  });
+  const trimMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    metalness: 0.45,
+    roughness: 0.38,
+  });
+  const glowStripMat = new THREE.MeshStandardMaterial({
+    color: 0xf3e8ff,
+    emissive: 0x9333ea,
+    emissiveIntensity: 0.9,
+  });
+
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.05, d), floorMat);
+  floor.position.set(cx, 0.115, cz);
+  floor.receiveShadow = true;
+  group.add(floor);
+
+  const doorCenter = (BUYER_SHOP.doorMinX + BUYER_SHOP.doorMaxX) / 2;
+  const doorWidth = BUYER_SHOP.doorMaxX - BUYER_SHOP.doorMinX;
+  const welcomeMat = new THREE.Mesh(
+    new THREE.BoxGeometry(doorWidth - 0.15, 0.025, 0.65),
+    awningMat
+  );
+  welcomeMat.position.set(doorCenter, 0.138, maxZ + 0.08);
+  group.add(welcomeMat);
+
+  const backWall = new THREE.Mesh(new THREE.BoxGeometry(w, 3.0, 0.24), wallMat);
+  backWall.position.set(cx, 1.61, minZ);
+  backWall.castShadow = true;
+  backWall.receiveShadow = true;
+  group.add(backWall);
+
+  const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.24, 3.0, d), wallMat);
+  leftWall.position.set(minX, 1.61, cz);
+  leftWall.castShadow = true;
+  group.add(leftWall);
+
+  const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.24, 3.0, d), wallMat);
+  rightWall.position.set(maxX, 1.61, cz);
+  rightWall.castShadow = true;
+  group.add(rightWall);
+
+  const leftFrontW = BUYER_SHOP.doorMinX - minX;
+  if (leftFrontW > 0.2) {
+    const lfw = new THREE.Mesh(
+      new THREE.BoxGeometry(leftFrontW, 3.0, 0.24),
+      wallMat
+    );
+    lfw.position.set(minX + leftFrontW / 2, 1.61, maxZ);
+    lfw.castShadow = true;
+    group.add(lfw);
+  }
+  const rightFrontW = maxX - BUYER_SHOP.doorMaxX;
+  if (rightFrontW > 0.2) {
+    const rfw = new THREE.Mesh(
+      new THREE.BoxGeometry(rightFrontW, 3.0, 0.24),
+      wallMat
+    );
+    rfw.position.set(BUYER_SHOP.doorMaxX + rightFrontW / 2, 1.61, maxZ);
+    rfw.castShadow = true;
+    group.add(rfw);
+  }
+
+  for (const px of [BUYER_SHOP.doorMinX, BUYER_SHOP.doorMaxX]) {
+    const pillar = new THREE.Mesh(
+      new THREE.BoxGeometry(0.2, 3.0, 0.26),
+      trimMat
+    );
+    pillar.position.set(px, 1.61, maxZ);
+    group.add(pillar);
+  }
+
+  const glowBar = new THREE.Mesh(
+    new THREE.BoxGeometry(w - 0.8, 0.1, 0.16),
+    glowStripMat
+  );
+  glowBar.position.set(cx, 2.9, minZ + 0.28);
+  group.add(glowBar);
+
+  const signTex = makeShopSignTexture(
+    'SECOND-HAND BUYER · RAZA BHAI',
+    'SELL READI STALLS, CHAIRS & TABLES (-50% CASH)',
+    '#7C3AED',
+    maxAniso
+  );
+  const innerSign = new THREE.Mesh(
+    new THREE.PlaneGeometry(Math.min(5.2, w - 0.8), 0.92),
+    new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.42 })
+  );
+  innerSign.position.set(cx, 2.34, minZ + 0.16);
+  group.add(innerSign);
+
+  const counter = new THREE.Mesh(
+    new THREE.BoxGeometry(2.3, 0.86, 0.68),
+    woodMat
+  );
+  counter.position.set(
+    BUYER_SHOP.counterPos.x,
+    0.54,
+    BUYER_SHOP.counterPos.z
+  );
+  counter.castShadow = true;
+  counter.receiveShadow = true;
+  group.add(counter);
+
+  // Decorative second-hand crates & stacked wooden goods inside corners
+  const crateMat = new THREE.MeshStandardMaterial({
+    color: 0xb45309,
+    roughness: 0.8,
+  });
+  for (const [bx, bz, bh] of [
+    [minX + 0.7, minZ + 0.8, 0.65],
+    [minX + 0.7, minZ + 1.55, 0.48],
+    [maxX - 0.75, minZ + 0.85, 0.7],
+    [maxX - 0.75, minZ + 1.65, 0.52],
+  ]) {
+    const crate = new THREE.Mesh(
+      new THREE.BoxGeometry(0.68, bh, 0.68),
+      crateMat
+    );
+    crate.position.set(bx, 0.14 + bh / 2, bz);
+    crate.castShadow = true;
+    group.add(crate);
+  }
+
+  const roofGroup = new THREE.Group();
+  const roofDeck = new THREE.Mesh(
+    new THREE.BoxGeometry(w + 0.35, 0.2, d + 0.35),
+    new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.72 })
+  );
+  roofDeck.position.set(cx, 3.18, cz);
+  roofDeck.castShadow = true;
+  roofGroup.add(roofDeck);
+
+  const frontAwning = new THREE.Mesh(
+    new THREE.BoxGeometry(w + 0.2, 0.15, 0.95),
+    awningMat
+  );
+  frontAwning.position.set(cx, 2.74, maxZ + 0.42);
+  frontAwning.rotation.x = 0.22;
+  frontAwning.castShadow = true;
+  roofGroup.add(frontAwning);
+
+  const roofSign = new THREE.Mesh(
+    new THREE.PlaneGeometry(Math.min(5.6, w - 0.6), 1.05),
+    new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.42 })
+  );
+  roofSign.position.set(cx, 3.76, maxZ + 0.15);
+  roofGroup.add(roofSign);
+  group.add(roofGroup);
+
+  const buyerRig = buildHumanRig(
+    BUYER_SHOP.buyerShirtHex,
+    '#1C1917',
+    false,
+    true
+  );
+  buyerRig.root.position.set(
+    BUYER_SHOP.buyerPos.x,
+    0.135,
+    BUYER_SHOP.buyerPos.z
+  );
+  buyerRig.root.rotation.y = 0;
+  scene.add(buyerRig.root);
+
+  scene.add(group);
+  return {
+    bounds: BUYER_SHOP.bounds,
+    roofGroup,
+    buyerRig,
+  };
+}
+
+interface WoodMasterVisuals {
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
+  roofGroup: THREE.Group;
+  masterRig: CharacterRig;
+  pickupCrate: THREE.Mesh;
+  pickupPadMat: THREE.MeshStandardMaterial;
+}
+
+function buildWoodMasterShopGroup(
+  scene: THREE.Scene,
+  woodTex: THREE.CanvasTexture,
+  maxAniso: number
+): WoodMasterVisuals {
+  const group = new THREE.Group();
+  const { minX, maxX, minZ, maxZ } = WOOD_MASTER_SHOP.bounds;
+  const w = maxX - minX;
+  const d = maxZ - minZ;
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+
+  const floorMat = new THREE.MeshStandardMaterial({
+    color: 0xfef3c7,
+    roughness: 0.72,
+  });
+  const wallMat = new THREE.MeshStandardMaterial({
+    color: WOOD_MASTER_SHOP.wallHex,
+    roughness: 0.84,
+  });
+  const awningMat = new THREE.MeshStandardMaterial({
+    color: WOOD_MASTER_SHOP.awningHex,
+    roughness: 0.62,
+  });
+  const woodMat = new THREE.MeshStandardMaterial({
+    map: woodTex,
+    roughness: 0.74,
+  });
+  const trimMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    metalness: 0.45,
+    roughness: 0.38,
+  });
+  const glowStripMat = new THREE.MeshStandardMaterial({
+    color: 0xfef3c7,
+    emissive: 0xd97706,
+    emissiveIntensity: 0.9,
+  });
+
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.05, d), floorMat);
+  floor.position.set(cx, 0.115, cz);
+  floor.receiveShadow = true;
+  group.add(floor);
+
+  const doorCenter = (WOOD_MASTER_SHOP.doorMinX + WOOD_MASTER_SHOP.doorMaxX) / 2;
+  const doorWidth = WOOD_MASTER_SHOP.doorMaxX - WOOD_MASTER_SHOP.doorMinX;
+  const welcomeMat = new THREE.Mesh(
+    new THREE.BoxGeometry(doorWidth - 0.15, 0.025, 0.65),
+    awningMat
+  );
+  welcomeMat.position.set(doorCenter, 0.138, maxZ + 0.08);
+  group.add(welcomeMat);
+
+  const backWall = new THREE.Mesh(new THREE.BoxGeometry(w, 3.0, 0.24), wallMat);
+  backWall.position.set(cx, 1.61, minZ);
+  backWall.castShadow = true;
+  backWall.receiveShadow = true;
+  group.add(backWall);
+
+  const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.24, 3.0, d), wallMat);
+  leftWall.position.set(minX, 1.61, cz);
+  leftWall.castShadow = true;
+  group.add(leftWall);
+
+  const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.24, 3.0, d), wallMat);
+  rightWall.position.set(maxX, 1.61, cz);
+  rightWall.castShadow = true;
+  group.add(rightWall);
+
+  const leftFrontW = WOOD_MASTER_SHOP.doorMinX - minX;
+  if (leftFrontW > 0.2) {
+    const lfw = new THREE.Mesh(
+      new THREE.BoxGeometry(leftFrontW, 3.0, 0.24),
+      wallMat
+    );
+    lfw.position.set(minX + leftFrontW / 2, 1.61, maxZ);
+    lfw.castShadow = true;
+    group.add(lfw);
+  }
+  const rightFrontW = maxX - WOOD_MASTER_SHOP.doorMaxX;
+  if (rightFrontW > 0.2) {
+    const rfw = new THREE.Mesh(
+      new THREE.BoxGeometry(rightFrontW, 3.0, 0.24),
+      wallMat
+    );
+    rfw.position.set(WOOD_MASTER_SHOP.doorMaxX + rightFrontW / 2, 1.61, maxZ);
+    rfw.castShadow = true;
+    group.add(rfw);
+  }
+
+  for (const px of [WOOD_MASTER_SHOP.doorMinX, WOOD_MASTER_SHOP.doorMaxX]) {
+    const pillar = new THREE.Mesh(
+      new THREE.BoxGeometry(0.2, 3.0, 0.26),
+      trimMat
+    );
+    pillar.position.set(px, 1.61, maxZ);
+    group.add(pillar);
+  }
+
+  const glowBar = new THREE.Mesh(
+    new THREE.BoxGeometry(w - 0.8, 0.1, 0.16),
+    glowStripMat
+  );
+  glowBar.position.set(cx, 2.9, minZ + 0.28);
+  group.add(glowBar);
+
+  const signTex = makeShopSignTexture(
+    'WOOD MASTER · USTAD KARIM',
+    'ORDER CHAIRS, TABLES, KITCHENS & READI CARTS',
+    '#92400E',
+    maxAniso
+  );
+  const innerSign = new THREE.Mesh(
+    new THREE.PlaneGeometry(Math.min(7.2, w - 0.8), 0.96),
+    new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.42 })
+  );
+  innerSign.position.set(cx, 2.34, minZ + 0.16);
+  group.add(innerSign);
+
+  // Carpentry Workbench Counter
+  const counter = new THREE.Mesh(
+    new THREE.BoxGeometry(2.9, 0.86, 0.72),
+    woodMat
+  );
+  counter.position.set(
+    WOOD_MASTER_SHOP.counterPos.x,
+    0.54,
+    WOOD_MASTER_SHOP.counterPos.z
+  );
+  counter.castShadow = true;
+  counter.receiveShadow = true;
+  group.add(counter);
+
+  // Stacked Lumber & Sample Chair/Wheel inside Workshop corners
+  const plankMat = new THREE.MeshStandardMaterial({
+    color: 0xb45309,
+    roughness: 0.82,
+  });
+  for (let i = 0; i < 4; i++) {
+    const plank = new THREE.Mesh(
+      new THREE.BoxGeometry(1.5, 0.14, 0.36),
+      plankMat
+    );
+    plank.position.set(minX + 1.15, 0.22 + i * 0.15, minZ + 0.95);
+    plank.rotation.y = (i % 2 === 0 ? 1 : -1) * 0.06;
+    plank.castShadow = true;
+    group.add(plank);
+  }
+  const sampleChair = buildWoodChairGroup(0.95);
+  sampleChair.position.set(maxX - 1.0, 0.14, minZ + 1.1);
+  sampleChair.rotation.y = -0.5;
+  group.add(sampleChair);
+
+  const sampleWheel = new THREE.Mesh(
+    new THREE.TorusGeometry(0.36, 0.06, 10, 20),
+    woodMat
+  );
+  sampleWheel.position.set(maxX - 0.55, 0.5, minZ + 2.1);
+  sampleWheel.rotation.y = Math.PI / 2;
+  group.add(sampleWheel);
+
+  // Order Pickup Pad outside/at workshop entrance
+  const pickupPadMat = new THREE.MeshStandardMaterial({
+    color: 0xd97706,
+    roughness: 0.65,
+  });
+  const pickupPad = new THREE.Mesh(
+    new THREE.BoxGeometry(1.05, 0.03, 1.05),
+    pickupPadMat
+  );
+  pickupPad.position.set(
+    WOOD_MASTER_SHOP.pickupPos.x,
+    0.13,
+    WOOD_MASTER_SHOP.pickupPos.z
+  );
+  group.add(pickupPad);
+
+  const pickupCrate = new THREE.Mesh(
+    new THREE.BoxGeometry(0.62, 0.54, 0.62),
+    woodMat
+  );
+  pickupCrate.position.set(
+    WOOD_MASTER_SHOP.pickupPos.x,
+    0.42,
+    WOOD_MASTER_SHOP.pickupPos.z
+  );
+  pickupCrate.castShadow = true;
+  pickupCrate.visible = false;
+  group.add(pickupCrate);
+
+  // Auto-Hiding Roof + Awning + Roof Signboard
+  const roofGroup = new THREE.Group();
+  const roofDeck = new THREE.Mesh(
+    new THREE.BoxGeometry(w + 0.35, 0.2, d + 0.35),
+    new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.72 })
+  );
+  roofDeck.position.set(cx, 3.18, cz);
+  roofDeck.castShadow = true;
+  roofGroup.add(roofDeck);
+
+  const frontAwning = new THREE.Mesh(
+    new THREE.BoxGeometry(w + 0.2, 0.15, 0.95),
+    awningMat
+  );
+  frontAwning.position.set(cx, 2.74, maxZ + 0.42);
+  frontAwning.rotation.x = 0.22;
+  frontAwning.castShadow = true;
+  roofGroup.add(frontAwning);
+
+  const roofSign = new THREE.Mesh(
+    new THREE.PlaneGeometry(Math.min(7.8, w - 0.6), 1.15),
+    new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.42 })
+  );
+  roofSign.position.set(cx, 3.78, maxZ + 0.15);
+  roofGroup.add(roofSign);
+  group.add(roofGroup);
+
+  const masterRig = buildHumanRig(
+    WOOD_MASTER_SHOP.masterShirtHex,
+    '#1C1917',
+    false,
+    true
+  );
+  masterRig.root.position.set(
+    WOOD_MASTER_SHOP.masterPos.x,
+    0.135,
+    WOOD_MASTER_SHOP.masterPos.z
+  );
+  masterRig.root.rotation.y = 0;
+  scene.add(masterRig.root);
+
+  scene.add(group);
+  return {
+    bounds: WOOD_MASTER_SHOP.bounds,
+    roofGroup,
+    masterRig,
+    pickupCrate,
+    pickupPadMat,
+  };
 }
 
 interface SupermarketVisuals {
@@ -2437,7 +4002,7 @@ function buildOpenSupermarket(maxAniso: number): SupermarketVisuals {
 
   const signTex = makeShopSignTexture(
     'CHAI SUPERMARKET',
-    'TEA · BISCUITS · CUPCAKES · CHAIRS & TABLES',
+    'TEA · SUGAR · COFFEE · BISCUITS · RECIPES',
     '#15803D',
     maxAniso
   );
@@ -2615,34 +4180,7 @@ function buildOpenSupermarket(maxAniso: number): SupermarketVisuals {
     group.add(itemBox, cupSleeve);
   }
 
-  // 6. Furniture Display Rug with Sample Table & Chair inside Supermarket
-  const displayRug = new THREE.Mesh(
-    new THREE.BoxGeometry(2.0, 0.02, 1.55),
-    new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.9 })
-  );
-  displayRug.position.set(
-    SUPERMARKET_FURNITURE_POS.x,
-    0.145,
-    SUPERMARKET_FURNITURE_POS.z
-  );
-  group.add(displayRug);
-
-  const sampleTable = buildWoodTableGroup(0.82);
-  sampleTable.position.set(
-    SUPERMARKET_FURNITURE_POS.x - 0.25,
-    0.15,
-    SUPERMARKET_FURNITURE_POS.z
-  );
-  const sampleChair = buildWoodChairGroup(0.85);
-  sampleChair.position.set(
-    SUPERMARKET_FURNITURE_POS.x + 0.52,
-    0.15,
-    SUPERMARKET_FURNITURE_POS.z
-  );
-  sampleChair.rotation.y = -Math.PI / 2;
-  group.add(sampleTable, sampleChair);
-
-  // 7. Supermarket Furniture Pickup Crate Pad at Entrance
+  // 6. Supermarket Pickup Crate Pad at Entrance (fallback for legacy saves)
   const pickupPad = new THREE.Mesh(
     new THREE.BoxGeometry(0.9, 0.03, 0.9),
     new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.7 })
@@ -3020,12 +4558,12 @@ function buildMilkmanBikeGroup(): MilkmanVisuals {
 
 function buildStreetEnvironment(scene: THREE.Scene, maxAniso: number): void {
   const asphaltTex = makeAsphaltTexture(maxAniso);
-  asphaltTex.repeat.set(22, 1);
+  asphaltTex.repeat.set(28, 1);
   const sidewalkTex = makeSidewalkTexture(maxAniso);
-  sidewalkTex.repeat.set(30, 4);
+  sidewalkTex.repeat.set(36, 6);
 
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(180, 180),
+    new THREE.PlaneGeometry(240, 240),
     new THREE.MeshStandardMaterial({ color: 0x7c9a63, roughness: 0.95 })
   );
   ground.rotation.x = -Math.PI / 2;
@@ -3034,26 +4572,27 @@ function buildStreetEnvironment(scene: THREE.Scene, maxAniso: number): void {
   scene.add(ground);
 
   const road = new THREE.Mesh(
-    new THREE.BoxGeometry(120, 0.04, 6.6),
+    new THREE.BoxGeometry(170, 0.04, 6.8),
     new THREE.MeshStandardMaterial({ map: asphaltTex, roughness: 0.88 })
   );
-  road.position.set(0, 0, 5.0);
+  road.position.set(10, 0, 5.1);
   road.receiveShadow = true;
   scene.add(road);
 
+  // Sidewalk, open alleys between shops, and full walkable backside plaza behind all shops!
   const sidewalk = new THREE.Mesh(
-    new THREE.BoxGeometry(120, 0.14, 11.4),
+    new THREE.BoxGeometry(170, 0.14, 23.0),
     new THREE.MeshStandardMaterial({ map: sidewalkTex, roughness: 0.85 })
   );
-  sidewalk.position.set(0, 0.04, -3.95);
+  sidewalk.position.set(10, 0.04, -9.65);
   sidewalk.receiveShadow = true;
   scene.add(sidewalk);
 
   const curb = new THREE.Mesh(
-    new THREE.BoxGeometry(120, 0.17, 0.28),
+    new THREE.BoxGeometry(170, 0.17, 0.28),
     new THREE.MeshStandardMaterial({ color: 0xa8a29e, roughness: 0.9 })
   );
-  curb.position.set(0, 0.06, 1.85);
+  curb.position.set(10, 0.06, 1.85);
   curb.receiveShadow = true;
   scene.add(curb);
 
@@ -3067,7 +4606,7 @@ function buildStreetEnvironment(scene: THREE.Scene, maxAniso: number): void {
     emissive: 0xf59e0b,
     emissiveIntensity: 1.4,
   });
-  for (const lx of [-15.2, -7.8, 13.2, 20.2]) {
+  for (const lx of [-27.5, -22.6, -12.0, 12.6, 25.4, 34.4, 47.4]) {
     const lamp = new THREE.Group();
     lamp.position.set(lx, 0.11, 1.25);
     const pole = new THREE.Mesh(
@@ -3091,14 +4630,19 @@ function buildStreetEnvironment(scene: THREE.Scene, maxAniso: number): void {
   }
 
   const treeCoords = [
-    [-18.0, 1.0],
-    [-7.5, 1.0],
-    [13.3, 1.0],
-    [21.2, 1.0],
-    [-18, 9.5],
+    [-25.6, 1.0],
+    [-13.2, 1.0],
+    [13.8, 1.0],
+    [26.6, 1.0],
+    [35.6, 1.0],
+    [49.0, 1.0],
+    [-18, 9.6],
     [-7, 9.8],
     [4, 9.6],
     [15, 9.5],
+    [26, 9.6],
+    [37, 9.6],
+    [47, 9.6],
   ];
   const trunkGeo = new THREE.CylinderGeometry(0.16, 0.24, 1.8, 8);
   trunkGeo.translate(0, 0.9, 0);
@@ -3147,13 +4691,17 @@ function buildStreetEnvironment(scene: THREE.Scene, maxAniso: number): void {
   scene.add(trunks, crowns);
 }
 
-function buildHelperMatGroup(): THREE.Group {
+function buildHelperMatGroup(
+  x: number,
+  z: number,
+  matHex = 0xb45309
+): THREE.Group {
   const g = new THREE.Group();
-  g.position.set(KID_SIT_POS.x, 0.11, KID_SIT_POS.z);
+  g.position.set(x, 0.11, z);
 
   const mat = new THREE.Mesh(
     new THREE.BoxGeometry(0.95, 0.03, 0.78),
-    new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.92 })
+    new THREE.MeshStandardMaterial({ color: matHex, roughness: 0.92 })
   );
   mat.position.y = 0.015;
   mat.receiveShadow = true;
@@ -3178,21 +4726,31 @@ export class Chai3DSceneController {
   private renderer: THREE.WebGLRenderer;
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
+  private camera2: THREE.PerspectiveCamera;
   public readonly isSoftwareGl: boolean;
 
   private playerRig: CharacterRig;
+  private player2Rig: CharacterRig;
   private ownerRig: CharacterRig;
-  private helperRig: CharacterRig;
-  private helperMatGroup: THREE.Group;
+  private helperRigs: Record<
+    HelperNpcId,
+    { rig: CharacterRig; mat: THREE.Group }
+  >;
   private cycleVisuals: CycleVisuals;
   private snacksCartVisuals: SnacksCartVisuals;
+  private coldCartVisuals: ColdCartVisuals;
   private supermarketVisuals: SupermarketVisuals;
   private rentableBuildingVisuals: RentableBuildingVisuals[];
+  private buyerShopVisuals: BuyerShopVisuals;
+  private woodMasterVisuals: WoodMasterVisuals;
   private carVisuals: CarVisuals;
   private milkmanVisuals: MilkmanVisuals;
   private targetRing: THREE.Mesh;
+  private targetRing2: THREE.Mesh;
   private placementGhostRing: THREE.Mesh;
+  private placementGhostRing2: THREE.Mesh;
   private customerRigs = new Map<string, CharacterRig>();
+  private beggarKidRigs = new Map<string, CharacterRig>();
   private pedestrianRigs = new Map<string, { rig: CharacterRig; bag: THREE.Mesh }>();
   private furnitureMeshes = new Map<string, THREE.Group>();
 
@@ -3224,7 +4782,7 @@ export class Chai3DSceneController {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0xf6d8ae);
-    this.scene.fog = new THREE.Fog(0xf6d8ae, 34, 78);
+    this.scene.fog = new THREE.Fog(0xf6d8ae, 46, 98);
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(
@@ -3237,6 +4795,10 @@ export class Chai3DSceneController {
     this.camera.position.set(0.5, 8.1, 10.8);
     this.camera.lookAt(0, 0.8, 0.0);
 
+    this.camera2 = new THREE.PerspectiveCamera(48, Math.max(0.2, (w * 0.5) / h), 0.2, 130);
+    this.camera2.position.set(1.5, 8.1, 10.8);
+    this.camera2.lookAt(1, 0.8, 0.0);
+
     const hemi = new THREE.HemisphereLight(0xbae6fd, 0x8b6f4e, 0.9);
     this.scene.add(hemi);
 
@@ -3245,11 +4807,11 @@ export class Chai3DSceneController {
     sun.castShadow = !this.isSoftwareGl;
     sun.shadow.mapSize.set(1024, 1024);
     sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 52;
-    sun.shadow.camera.left = -24;
-    sun.shadow.camera.right = 24;
-    sun.shadow.camera.top = 16;
-    sun.shadow.camera.bottom = -16;
+    sun.shadow.camera.far = 68;
+    sun.shadow.camera.left = -36;
+    sun.shadow.camera.right = 38;
+    sun.shadow.camera.top = 22;
+    sun.shadow.camera.bottom = -22;
     sun.shadow.bias = -0.0005;
     sun.shadow.normalBias = 0.02;
     this.scene.add(sun);
@@ -3270,10 +4832,24 @@ export class Chai3DSceneController {
     this.scene.add(this.snacksCartVisuals.group);
     this.scene.add(this.snacksCartVisuals.plotSignGroup);
 
-    // Open Walk-In Supermarket + All Open Rentable Buildings + Water Tap + Trash Bin
+    this.coldCartVisuals = buildColdCartGroup(woodTex, maxAniso);
+    this.scene.add(this.coldCartVisuals.group);
+    this.scene.add(this.coldCartVisuals.plotSignGroup);
+
+    // Open Walk-In Supermarket + All 3x Larger Rentable Shops + Second-Hand Buyer Shop + Water Tap + Trash Bin
     this.supermarketVisuals = buildOpenSupermarket(maxAniso);
     this.scene.add(this.supermarketVisuals.group);
-    this.rentableBuildingVisuals = buildRentableBuildings(this.scene, maxAniso);
+    this.rentableBuildingVisuals = buildRentableBuildings(
+      this.scene,
+      woodTex,
+      maxAniso
+    );
+    this.buyerShopVisuals = buildBuyerShopGroup(this.scene, maxAniso);
+    this.woodMasterVisuals = buildWoodMasterShopGroup(
+      this.scene,
+      woodTex,
+      maxAniso
+    );
     this.scene.add(buildWaterTapGroup());
     this.scene.add(buildTrashBinGroup());
 
@@ -3286,14 +4862,35 @@ export class Chai3DSceneController {
     this.playerRig = buildHumanRig('#EA580C', '#1C1917', true);
     this.scene.add(this.playerRig.root);
 
+    this.player2Rig = buildHumanRig('#0D9488', '#1C1917', true);
+    this.player2Rig.root.visible = false;
+    this.scene.add(this.player2Rig.root);
+
     this.ownerRig = buildHumanRig('#0F766E', '#1C1917', false, true);
     this.scene.add(this.ownerRig.root);
 
-    this.helperMatGroup = buildHelperMatGroup();
-    this.scene.add(this.helperMatGroup);
-    this.helperRig = buildHumanRig('#78716C', '#1C1917', false);
-    this.helperRig.root.scale.setScalar(0.68);
-    this.scene.add(this.helperRig.root);
+    const helperEntries = {} as Record<
+      HelperNpcId,
+      { rig: CharacterRig; mat: THREE.Group }
+    >;
+    for (const id of HELPER_NPC_IDS) {
+      const cfg = HELPER_NPCS[id];
+      const matHex =
+        id === 'munni' ? 0x9d174d : id === 'babloo' ? 0x115e59 : 0xb45309;
+      const mat = buildHelperMatGroup(cfg.sitPos.x, cfg.sitPos.z, matHex);
+      this.scene.add(mat);
+      const rig = buildHumanRig(
+        cfg.shirtHex,
+        cfg.hairHex,
+        false,
+        false,
+        cfg.gender === 'girl'
+      );
+      rig.root.scale.setScalar(cfg.scale);
+      this.scene.add(rig.root);
+      helperEntries[id] = { rig, mat };
+    }
+    this.helperRigs = helperEntries;
 
     this.targetRing = new THREE.Mesh(
       new THREE.RingGeometry(0.45, 0.62, 24),
@@ -3309,6 +4906,20 @@ export class Chai3DSceneController {
     this.targetRing.visible = false;
     this.scene.add(this.targetRing);
 
+    this.targetRing2 = new THREE.Mesh(
+      new THREE.RingGeometry(0.45, 0.62, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0x14b8a6,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.9,
+      })
+    );
+    this.targetRing2.rotation.x = -Math.PI / 2;
+    this.targetRing2.position.y = 0.13;
+    this.targetRing2.visible = false;
+    this.scene.add(this.targetRing2);
+
     this.placementGhostRing = new THREE.Mesh(
       new THREE.RingGeometry(0.32, 0.48, 20),
       new THREE.MeshBasicMaterial({
@@ -3322,6 +4933,20 @@ export class Chai3DSceneController {
     this.placementGhostRing.position.y = 0.14;
     this.placementGhostRing.visible = false;
     this.scene.add(this.placementGhostRing);
+
+    this.placementGhostRing2 = new THREE.Mesh(
+      new THREE.RingGeometry(0.32, 0.48, 20),
+      new THREE.MeshBasicMaterial({
+        color: 0x22c55e,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.85,
+      })
+    );
+    this.placementGhostRing2.rotation.x = -Math.PI / 2;
+    this.placementGhostRing2.position.y = 0.14;
+    this.placementGhostRing2.visible = false;
+    this.scene.add(this.placementGhostRing2);
 
     if (!this.isSoftwareGl) {
       this.renderer.compile(this.scene, this.camera);
@@ -3340,6 +4965,8 @@ export class Chai3DSceneController {
     const h = this.container.clientHeight || window.innerHeight;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.camera2.aspect = Math.max(0.2, (w * 0.5) / h);
+    this.camera2.updateProjectionMatrix();
     this.renderer.setSize(w, h);
   }
 
@@ -3358,7 +4985,14 @@ export class Chai3DSceneController {
       rig.heldPlateMesh,
       rig.heldSamosaMesh,
       rig.heldPakoraMesh,
-      holding
+      holding,
+      {
+        sodaGroup: rig.heldSodaGroup,
+        sodaIceCollar: rig.heldSodaIceCollar,
+        coneGroup: rig.heldConeGroup,
+        coneScoop: rig.heldConeScoop,
+        coneIceRing: rig.heldConeIceRing,
+      }
     );
     if (holding) {
       rig.leftShoulderPivot.rotation.x = furnKind ? -1.05 : 0.08;
@@ -3407,6 +5041,7 @@ export class Chai3DSceneController {
   private syncCustomerRigs(
     customers: TeaCustomer[],
     furniture: CafeFurniture[],
+    world: WorldSave,
     elapsedSec: number,
     dt: number
   ): void {
@@ -3464,10 +5099,8 @@ export class Chai3DSceneController {
         if (seatedChair) {
           rig.root.rotation.y = getFacingAngleForSeat(seatedChair, furniture);
         } else {
-          rig.root.rotation.y = Math.atan2(
-            CYCLE_ANCHOR.x - c.x,
-            CYCLE_ANCHOR.z - c.z
-          );
+          const lookAt = getStallLookTargetForDrink(c.orderDrink, world);
+          rig.root.rotation.y = Math.atan2(lookAt.x - c.x, lookAt.z - c.z);
         }
 
         if (isDrinking) {
@@ -3482,7 +5115,14 @@ export class Chai3DSceneController {
             rig.heldPlateMesh,
             rig.heldSamosaMesh,
             rig.heldPakoraMesh,
-            item
+            item,
+            {
+              sodaGroup: rig.heldSodaGroup,
+              sodaIceCollar: rig.heldSodaIceCollar,
+              coneGroup: rig.heldConeGroup,
+              coneScoop: rig.heldConeScoop,
+              coneIceRing: rig.heldConeIceRing,
+            }
           );
         } else {
           rig.heldCupGroup.visible = false;
@@ -3564,6 +5204,206 @@ export class Chai3DSceneController {
     }
   }
 
+  private syncBeggarKidRigs(
+    kids: BeggarKidCustomer[],
+    world: WorldSave,
+    elapsedSec: number,
+    dt: number
+  ): void {
+    const activeIds = new Set(kids.map((k) => k.id));
+    for (const [id, rig] of this.beggarKidRigs.entries()) {
+      if (!activeIds.has(id)) {
+        this.scene.remove(rig.root);
+        this.beggarKidRigs.delete(id);
+      }
+    }
+
+    for (const kid of kids) {
+      let rig = this.beggarKidRigs.get(kid.id);
+      if (!rig) {
+        rig = buildHumanRig(kid.shirtColor, kid.hairColor, false);
+        rig.root.scale.setScalar(0.64);
+        this.scene.add(rig.root);
+        this.beggarKidRigs.set(kid.id, rig);
+      }
+      rig.root.position.set(kid.x, 0.11, kid.z);
+
+      const isWalkingMarketing =
+        kid.status === 'marketing' &&
+        Math.hypot(kid.targetX - kid.x, kid.targetZ - kid.z) > 0.25;
+      const isWalking =
+        kid.status === 'walking_in' ||
+        kid.status === 'walking_out' ||
+        isWalkingMarketing;
+      const isMarketing = kid.status === 'marketing' && !isWalkingMarketing;
+      const isEating = kid.status === 'eating';
+
+      if (isWalking) {
+        const destX =
+          kid.status === 'walking_in' || kid.status === 'marketing'
+            ? kid.targetX
+            : kid.seq % 2 === 0
+              ? -12.5
+              : 13.5;
+        const destZ =
+          kid.status === 'walking_in' || kid.status === 'marketing'
+            ? kid.targetZ
+            : 1.08;
+        rig.root.rotation.y =
+          typeof kid.yaw === 'number'
+            ? kid.yaw
+            : Math.atan2(destX - kid.x, destZ - kid.z);
+        animateRigPose(
+          rig,
+          kid.walkCycle,
+          true,
+          false,
+          false,
+          0,
+          elapsedSec + kid.seq,
+          dt
+        );
+        const armSwing = Math.sin(kid.walkCycle) * 0.5;
+        rig.leftShoulderPivot.rotation.x = -armSwing;
+        rig.rightShoulderPivot.rotation.x = armSwing;
+        rig.heldCupGroup.visible = false;
+      } else {
+        if (isMarketing) {
+          rig.root.rotation.y = kid.yaw ?? 0;
+        } else {
+          const lookAt = getStallLookTargetForDrink(kid.orderDrink, world);
+          rig.root.rotation.y = Math.atan2(lookAt.x - kid.x, lookAt.z - kid.z);
+        }
+
+        if (isEating) {
+          applyCupContentsVisual(
+            rig.heldCupGroup,
+            rig.heldCupMeshes,
+            rig.heldTeaFill,
+            rig.heldSugarDots,
+            rig.heldBiscuitMesh,
+            rig.heldCupcakeMesh,
+            rig.heldPlateMesh,
+            rig.heldSamosaMesh,
+            rig.heldPakoraMesh,
+            drinkToHotItem(kid.orderDrink),
+            {
+              sodaGroup: rig.heldSodaGroup,
+              sodaIceCollar: rig.heldSodaIceCollar,
+              coneGroup: rig.heldConeGroup,
+              coneScoop: rig.heldConeScoop,
+              coneIceRing: rig.heldConeIceRing,
+            }
+          );
+        } else {
+          rig.heldCupGroup.visible = false;
+          if (!isMarketing) {
+            rig.leftShoulderPivot.rotation.x = THREE.MathUtils.damp(
+              rig.leftShoulderPivot.rotation.x,
+              0,
+              12,
+              dt
+            );
+            rig.rightShoulderPivot.rotation.x = THREE.MathUtils.damp(
+              rig.rightShoulderPivot.rotation.x,
+              0,
+              12,
+              dt
+            );
+          }
+        }
+
+        animateRigPose(
+          rig,
+          kid.walkCycle,
+          false,
+          false,
+          isEating,
+          elapsedSec * 3.6 + kid.seq * 0.8,
+          elapsedSec + kid.seq,
+          dt,
+          isMarketing
+        );
+      }
+    }
+  }
+
+  private syncNamedVisitorRig(
+    rig: CharacterRig,
+    visitor: ShopVisitorState | undefined,
+    phaseOffset: number,
+    elapsedSec: number,
+    dt: number
+  ): void {
+    if (!visitor) {
+      rig.heldCupGroup.visible = false;
+      animateRigPose(rig, 0, false, false, false, 0, elapsedSec + phaseOffset, dt);
+      return;
+    }
+
+    const groundY = visitor.z < -5.0 ? 0.135 : 0.11;
+    const isMoving =
+      visitor.phase === 'walking_to_stall' ||
+      visitor.phase === 'returning_to_shop';
+    const isDrinking = visitor.phase === 'eating_drinking';
+
+    rig.root.position.set(visitor.x, groundY, visitor.z);
+    rig.root.rotation.y = visitor.yaw;
+
+    if (isDrinking) {
+      applyCupContentsVisual(
+        rig.heldCupGroup,
+        rig.heldCupMeshes,
+        rig.heldTeaFill,
+        rig.heldSugarDots,
+        rig.heldBiscuitMesh,
+        rig.heldCupcakeMesh,
+        rig.heldPlateMesh,
+        rig.heldSamosaMesh,
+        rig.heldPakoraMesh,
+        drinkToHotItem(visitor.orderDrink),
+        {
+          sodaGroup: rig.heldSodaGroup,
+          sodaIceCollar: rig.heldSodaIceCollar,
+          coneGroup: rig.heldConeGroup,
+          coneScoop: rig.heldConeScoop,
+          coneIceRing: rig.heldConeIceRing,
+        }
+      );
+    } else {
+      rig.heldCupGroup.visible = false;
+      if (isMoving) {
+        const armSwing = Math.sin(visitor.walkCycle) * 0.45;
+        rig.leftShoulderPivot.rotation.x = -armSwing;
+        rig.rightShoulderPivot.rotation.x = armSwing;
+      } else {
+        rig.leftShoulderPivot.rotation.x = THREE.MathUtils.damp(
+          rig.leftShoulderPivot.rotation.x,
+          0,
+          12,
+          dt
+        );
+        rig.rightShoulderPivot.rotation.x = THREE.MathUtils.damp(
+          rig.rightShoulderPivot.rotation.x,
+          0,
+          12,
+          dt
+        );
+      }
+    }
+
+    animateRigPose(
+      rig,
+      visitor.walkCycle,
+      isMoving,
+      false,
+      isDrinking,
+      elapsedSec * 3.5,
+      elapsedSec + phaseOffset,
+      dt
+    );
+  }
+
   public syncAndRender(
     shift: ShiftSnapshot,
     world: WorldSave,
@@ -3571,93 +5411,190 @@ export class Chai3DSceneController {
     dt: number,
     elapsedSec: number
   ): ProjectedLabel[] {
-    // 1. Player transform, sitting pose & articulated animation
+    // 1. Player 1 & Player 2 (Co-Op Partner) transforms, building roof hiding & articulated poses
     const p = shift.player;
-    const isOnRoad = p.z > 1.85;
-    const isInSupermarket =
-      p.x >= SUPERMARKET_BOUNDS.minX - 0.1 &&
-      p.x <= SUPERMARKET_BOUNDS.maxX + 0.1 &&
-      p.z >= SUPERMARKET_BOUNDS.minZ - 0.1 &&
-      p.z <= SUPERMARKET_BOUNDS.maxZ + 0.25;
+    const p2 = shift.player2?.active ? shift.player2 : null;
+    const isInsideBox = (
+      actor: Player3DState,
+      b: { minX: number; maxX: number; minZ: number; maxZ: number }
+    ) =>
+      actor.x >= b.minX - 0.05 &&
+      actor.x <= b.maxX + 0.05 &&
+      actor.z >= b.minZ - 0.05 &&
+      actor.z <= b.maxZ + 0.22;
 
-    let isInAnyShop = isInSupermarket;
+    const p1InSupermarket = isInsideBox(p, SUPERMARKET_BOUNDS);
+    const p2InSupermarket = p2 ? isInsideBox(p2, SUPERMARKET_BOUNDS) : false;
+    const anyInSupermarket = p1InSupermarket || p2InSupermarket;
+
+    let p1InAnyShop = p1InSupermarket;
+    let p2InAnyShop = p2InSupermarket;
+    let activeInsideShopId: ShopBuildingId | null = null;
+    const builtKitchenIds = new Set(world.shopKitchens ?? []);
+
+    const shopVisitors = getShiftShopVisitors(shift);
+    const visitorById = new Map(shopVisitors.map((v) => [v.id, v]));
+
     for (const rb of this.rentableBuildingVisuals) {
-      const insideBuilding =
-        p.x >= rb.bounds.minX - 0.1 &&
-        p.x <= rb.bounds.maxX + 0.1 &&
-        p.z >= rb.bounds.minZ - 0.1 &&
-        p.z <= rb.bounds.maxZ + 0.25;
-      rb.roofGroup.visible = !insideBuilding;
+      const p1Inside = isInsideBox(p, rb.bounds);
+      const p2Inside = p2 ? isInsideBox(p2, rb.bounds) : false;
+      rb.roofGroup.visible = !(p1Inside || p2Inside);
       rb.rentedBanner.visible = world.rentedShops.some(
         (r) => r.buildingId === rb.id
       );
-      animateRigPose(
+      rb.kitchen.group.visible = builtKitchenIds.has(rb.id);
+      const visId =
+        rb.id === 'west_shop'
+          ? 'west_owner'
+          : rb.id === 'center_shop'
+            ? 'center_owner'
+            : 'east_owner';
+      this.syncNamedVisitorRig(
         rb.ownerRig,
-        0,
-        false,
-        false,
-        false,
-        0,
-        elapsedSec + rb.bounds.minX,
+        visitorById.get(visId),
+        rb.bounds.minX,
+        elapsedSec,
         dt
       );
-      if (insideBuilding) isInAnyShop = true;
+      if (p1Inside) {
+        p1InAnyShop = true;
+        if (builtKitchenIds.has(rb.id)) activeInsideShopId = rb.id;
+      }
+      if (p2Inside) {
+        p2InAnyShop = true;
+        if (!activeInsideShopId && builtKitchenIds.has(rb.id)) {
+          activeInsideShopId = rb.id;
+        }
+      }
     }
 
-    const baseGroundY = isOnRoad ? 0.02 : isInAnyShop ? 0.135 : 0.11;
-    const isPlayerSitting = Boolean(p.sittingChairId);
-
-    // Auto-hide Supermarket Roof & Readi Awnings when player stands close!
-    this.supermarketVisuals.roofGroup.visible = !isInSupermarket;
-    const isWorkingAtStall =
-      p.x >= CYCLE_ANCHOR.x - 4.4 &&
-      p.x <= CYCLE_ANCHOR.x + 4.4 &&
-      p.z >= CYCLE_ANCHOR.z - 2.7 &&
-      p.z <= CYCLE_ANCHOR.z + 2.5;
-    this.cycleVisuals.awningGroup.visible = !isWorkingAtStall;
-
-    const isWorkingAtSnacks =
-      world.hasSnacksCart &&
-      p.x >= SNACKS_CART_ANCHOR.x - 3.2 &&
-      p.x <= SNACKS_CART_ANCHOR.x + 3.2 &&
-      p.z >= SNACKS_CART_ANCHOR.z - 2.7 &&
-      p.z <= SNACKS_CART_ANCHOR.z + 2.5;
-    this.snacksCartVisuals.awningGroup.visible = !isWorkingAtSnacks;
-
-    this.playerRig.root.position.set(p.x, baseGroundY, p.z);
-    this.playerRig.root.rotation.y = p.yaw;
-
-    animateRigPose(
-      this.playerRig,
-      p.walkCycle,
-      p.isMoving && !isPlayerSitting,
-      isPlayerSitting,
-      false,
-      0,
+    const p1InsideBuyer = isInsideBox(p, this.buyerShopVisuals.bounds);
+    const p2InsideBuyer = p2 ? isInsideBox(p2, this.buyerShopVisuals.bounds) : false;
+    this.buyerShopVisuals.roofGroup.visible = !(p1InsideBuyer || p2InsideBuyer);
+    this.syncNamedVisitorRig(
+      this.buyerShopVisuals.buyerRig,
+      visitorById.get('gear_buyer'),
+      7.5,
       elapsedSec,
       dt
     );
-    if (!p.holding) {
-      if (p.isMoving && !isPlayerSitting) {
-        const armSwing = Math.sin(p.walkCycle) * 0.55;
-        this.playerRig.leftShoulderPivot.rotation.x = -armSwing;
-        this.playerRig.rightShoulderPivot.rotation.x = armSwing;
-      } else {
-        this.playerRig.leftShoulderPivot.rotation.x = THREE.MathUtils.damp(
-          this.playerRig.leftShoulderPivot.rotation.x,
-          0,
-          14,
-          dt
-        );
-        this.playerRig.rightShoulderPivot.rotation.x = THREE.MathUtils.damp(
-          this.playerRig.rightShoulderPivot.rotation.x,
-          0,
-          14,
-          dt
-        );
+    if (p1InsideBuyer) p1InAnyShop = true;
+    if (p2InsideBuyer) p2InAnyShop = true;
+
+    const p1InsideWood = isInsideBox(p, this.woodMasterVisuals.bounds);
+    const p2InsideWood = p2 ? isInsideBox(p2, this.woodMasterVisuals.bounds) : false;
+    this.woodMasterVisuals.roofGroup.visible = !(p1InsideWood || p2InsideWood);
+    this.syncNamedVisitorRig(
+      this.woodMasterVisuals.masterRig,
+      visitorById.get('wood_master'),
+      11.2,
+      elapsedSec,
+      dt
+    );
+    if (p1InsideWood) p1InAnyShop = true;
+    if (p2InsideWood) p2InAnyShop = true;
+
+    const getActorGroundY = (actor: Player3DState, inAnyShop: boolean) => {
+      if (actor.z > 8.5) return 0.04;
+      if (actor.z > 1.85) return 0.02;
+      if (inAnyShop) return 0.135;
+      return 0.11;
+    };
+
+    // Auto-hide Supermarket Roof & Readi Awnings when either partner stands close
+    this.supermarketVisuals.roofGroup.visible = !anyInSupermarket;
+    this.cycleVisuals.group.visible = world.hasTeaStall !== false;
+    const isNearTeaCart = (actor: Player3DState) =>
+      actor.x >= CYCLE_ANCHOR.x - 4.4 &&
+      actor.x <= CYCLE_ANCHOR.x + 4.4 &&
+      actor.z >= CYCLE_ANCHOR.z - 2.7 &&
+      actor.z <= CYCLE_ANCHOR.z + 2.5;
+    const isWorkingAtStall =
+      world.hasTeaStall !== false &&
+      (isNearTeaCart(p) || (p2 ? isNearTeaCart(p2) : false));
+    this.cycleVisuals.awningGroup.visible = !isWorkingAtStall;
+
+    const isNearSnacksCart = (actor: Player3DState) =>
+      actor.x >= SNACKS_CART_ANCHOR.x - 3.2 &&
+      actor.x <= SNACKS_CART_ANCHOR.x + 3.2 &&
+      actor.z >= SNACKS_CART_ANCHOR.z - 2.7 &&
+      actor.z <= SNACKS_CART_ANCHOR.z + 2.5;
+    const isWorkingAtSnacks =
+      world.hasSnacksCart &&
+      (isNearSnacksCart(p) || (p2 ? isNearSnacksCart(p2) : false));
+    this.snacksCartVisuals.awningGroup.visible = !isWorkingAtSnacks;
+
+    const isNearColdCart = (actor: Player3DState) =>
+      actor.x >= COLD_CART_ANCHOR.x - 3.2 &&
+      actor.x <= COLD_CART_ANCHOR.x + 3.2 &&
+      actor.z >= COLD_CART_ANCHOR.z - 2.7 &&
+      actor.z <= COLD_CART_ANCHOR.z + 2.5;
+    const isWorkingAtCold =
+      Boolean(world.hasColdCart) &&
+      (isNearColdCart(p) || (p2 ? isNearColdCart(p2) : false));
+    this.coldCartVisuals.awningGroup.visible = !isWorkingAtCold;
+
+    const syncPlayerRigVisual = (
+      rig: CharacterRig,
+      actor: Player3DState,
+      groundY: number,
+      phaseOffset: number
+    ) => {
+      const isSitting = Boolean(actor.sittingChairId);
+      rig.root.position.set(actor.x, groundY, actor.z);
+      rig.root.rotation.y = actor.yaw;
+
+      animateRigPose(
+        rig,
+        actor.walkCycle,
+        actor.isMoving && !isSitting,
+        isSitting,
+        false,
+        0,
+        elapsedSec + phaseOffset,
+        dt
+      );
+      if (!actor.holding) {
+        if (actor.isMoving && !isSitting) {
+          const armSwing = Math.sin(actor.walkCycle) * 0.55;
+          rig.leftShoulderPivot.rotation.x = -armSwing;
+          rig.rightShoulderPivot.rotation.x = armSwing;
+        } else {
+          rig.leftShoulderPivot.rotation.x = THREE.MathUtils.damp(
+            rig.leftShoulderPivot.rotation.x,
+            0,
+            14,
+            dt
+          );
+          rig.rightShoulderPivot.rotation.x = THREE.MathUtils.damp(
+            rig.rightShoulderPivot.rotation.x,
+            0,
+            14,
+            dt
+          );
+        }
       }
+      this.updateHeldVisual(rig, actor.holding);
+    };
+
+    syncPlayerRigVisual(
+      this.playerRig,
+      p,
+      getActorGroundY(p, p1InAnyShop),
+      0
+    );
+
+    if (p2) {
+      this.player2Rig.root.visible = true;
+      syncPlayerRigVisual(
+        this.player2Rig,
+        p2,
+        getActorGroundY(p2, p2InAnyShop),
+        1.9
+      );
+    } else {
+      this.player2Rig.root.visible = false;
     }
-    this.updateHeldVisual(this.playerRig, p.holding);
 
     // 1b. Dynamic Supermarket Owner NPC
     const owner = shift.supermarketOwner;
@@ -3688,7 +5625,14 @@ export class Chai3DSceneController {
         this.ownerRig.heldPlateMesh,
         this.ownerRig.heldSamosaMesh,
         this.ownerRig.heldPakoraMesh,
-        drinkToHotItem(owner.orderDrink)
+        drinkToHotItem(owner.orderDrink),
+        {
+          sodaGroup: this.ownerRig.heldSodaGroup,
+          sodaIceCollar: this.ownerRig.heldSodaIceCollar,
+          coneGroup: this.ownerRig.heldConeGroup,
+          coneScoop: this.ownerRig.heldConeScoop,
+          coneIceRing: this.ownerRig.heldConeIceRing,
+        }
       );
     } else {
       this.ownerRig.heldCupGroup.visible = false;
@@ -3723,87 +5667,191 @@ export class Chai3DSceneController {
       dt
     );
 
-    // 1c. Poor Kid / Helper ("Chotu") Rig
-    const helper = shift.helper;
-    const helperSitting = helper.status === 'sitting';
-    this.helperMatGroup.visible = helperSitting;
-    this.helperRig.root.position.set(helper.x, 0.11, helper.z);
-    if (helperSitting) {
-      const lookYaw = Math.atan2(p.x - helper.x, p.z - helper.z);
-      this.helperRig.root.rotation.y =
-        Math.hypot(p.x - helper.x, p.z - helper.z) < 4.5 ? lookYaw : 0;
-      this.helperRig.heldCupGroup.visible = false;
-      animateRigPose(
-        this.helperRig,
-        0,
-        false,
-        true,
-        false,
-        0,
-        elapsedSec + 4.1,
-        dt
-      );
-    } else {
-      const isHelperMoving =
-        helper.task !== 'idle' &&
-        helper.task !== 'waiting_boil' &&
-        helper.actionTimer <= 0;
-      this.helperRig.root.rotation.y = helper.yaw;
-      animateRigPose(
-        this.helperRig,
-        helper.walkCycle,
-        isHelperMoving,
-        false,
-        false,
-        0,
-        elapsedSec + 4.1,
-        dt
-      );
-      if (!helper.holding) {
-        if (isHelperMoving) {
-          const armSwing = Math.sin(helper.walkCycle) * 0.5;
-          this.helperRig.leftShoulderPivot.rotation.x = -armSwing;
-          this.helperRig.rightShoulderPivot.rotation.x = armSwing;
-        } else {
-          this.helperRig.leftShoulderPivot.rotation.x = THREE.MathUtils.damp(
-            this.helperRig.leftShoulderPivot.rotation.x,
+    // 1c. Poor Kids / Helpers ("Chotu", "Munni", "Babloo") Rigs (Including Hungry Begging & Corner Marketing)
+    const helpersList = getShiftHelpers(shift);
+    helpersList.forEach((h, idx) => {
+      const hId: HelperNpcId = h.id ?? 'chotu';
+      const cfg = HELPER_NPCS[hId];
+      const entry = this.helperRigs[hId];
+      if (!entry) return;
+      const isUnhired = h.status === 'sitting';
+      const begState = h.beggingState ?? 'at_mat';
+      const isAtMat = isUnhired && begState === 'at_mat';
+      const isMarketingCorner = isUnhired && begState === 'marketing';
+      const isEatingFree = isUnhired && begState === 'eating_free';
+      const isBeggingWait = isUnhired && begState === 'begging_at_stall';
+      const isBeggingWalk =
+        isUnhired &&
+        (begState === 'walking_to_stall' || begState === 'returning_marketing');
+
+      entry.mat.visible = isUnhired;
+      const hGroundY = h.z < -5.2 ? 0.135 : 0.11;
+      entry.rig.root.position.set(h.x, hGroundY, h.z);
+
+      if (isAtMat) {
+        const d1 = Math.hypot(p.x - h.x, p.z - h.z);
+        const d2 = p2 ? Math.hypot(p2.x - h.x, p2.z - h.z) : Infinity;
+        const lookActor = d2 < d1 && p2 ? p2 : p;
+        const nearestDist = Math.min(d1, d2);
+        const lookYaw = Math.atan2(lookActor.x - h.x, lookActor.z - h.z);
+        entry.rig.root.rotation.y = nearestDist < 4.5 ? lookYaw : 0;
+        entry.rig.heldCupGroup.visible = false;
+        animateRigPose(
+          entry.rig,
+          0,
+          false,
+          true,
+          false,
+          0,
+          elapsedSec + 4.1 + idx * 1.3,
+          dt
+        );
+      } else if (isMarketingCorner) {
+        entry.rig.root.rotation.y = 0;
+        entry.rig.heldCupGroup.visible = false;
+        animateRigPose(
+          entry.rig,
+          0,
+          false,
+          false,
+          false,
+          0,
+          elapsedSec + 4.1 + idx * 1.3,
+          dt,
+          true
+        );
+      } else if (isBeggingWait || isEatingFree || isBeggingWalk) {
+        if (isBeggingWalk) {
+          entry.rig.root.rotation.y = h.yaw;
+          entry.rig.heldCupGroup.visible = false;
+          const armSwing = Math.sin(h.walkCycle) * 0.5;
+          entry.rig.leftShoulderPivot.rotation.x = -armSwing;
+          entry.rig.rightShoulderPivot.rotation.x = armSwing;
+          animateRigPose(
+            entry.rig,
+            h.walkCycle,
+            true,
+            false,
+            false,
             0,
-            12,
+            elapsedSec + 4.1 + idx * 1.3,
             dt
           );
-          this.helperRig.rightShoulderPivot.rotation.x = THREE.MathUtils.damp(
-            this.helperRig.rightShoulderPivot.rotation.x,
-            0,
-            12,
+        } else {
+          const lookAt = getStallLookTargetForDrink(
+            h.beggingDrink ?? 'tea',
+            world
+          );
+          entry.rig.root.rotation.y = Math.atan2(lookAt.x - h.x, lookAt.z - h.z);
+          if (isEatingFree) {
+            applyCupContentsVisual(
+              entry.rig.heldCupGroup,
+              entry.rig.heldCupMeshes,
+              entry.rig.heldTeaFill,
+              entry.rig.heldSugarDots,
+              entry.rig.heldBiscuitMesh,
+              entry.rig.heldCupcakeMesh,
+              entry.rig.heldPlateMesh,
+              entry.rig.heldSamosaMesh,
+              entry.rig.heldPakoraMesh,
+              drinkToHotItem(h.beggingDrink ?? 'tea'),
+              {
+                sodaGroup: entry.rig.heldSodaGroup,
+                sodaIceCollar: entry.rig.heldSodaIceCollar,
+                coneGroup: entry.rig.heldConeGroup,
+                coneScoop: entry.rig.heldConeScoop,
+                coneIceRing: entry.rig.heldConeIceRing,
+              }
+            );
+          } else {
+            entry.rig.heldCupGroup.visible = false;
+            entry.rig.leftShoulderPivot.rotation.x = THREE.MathUtils.damp(
+              entry.rig.leftShoulderPivot.rotation.x,
+              0,
+              12,
+              dt
+            );
+            entry.rig.rightShoulderPivot.rotation.x = THREE.MathUtils.damp(
+              entry.rig.rightShoulderPivot.rotation.x,
+              0,
+              12,
+              dt
+            );
+          }
+          animateRigPose(
+            entry.rig,
+            h.walkCycle,
+            false,
+            false,
+            isEatingFree,
+            elapsedSec * 3.6 + idx * 0.9,
+            elapsedSec + 4.1 + idx * 1.3,
             dt
           );
         }
+      } else {
+        const isHMoving =
+          h.task !== 'idle' &&
+          h.task !== 'waiting_boil' &&
+          h.task !== 'waiting_fry' &&
+          h.task !== 'waiting_chill' &&
+          h.actionTimer <= 0;
+        entry.rig.root.rotation.y = h.yaw;
+        animateRigPose(
+          entry.rig,
+          h.walkCycle,
+          isHMoving,
+          false,
+          false,
+          0,
+          elapsedSec + 4.1 + idx * 1.3,
+          dt
+        );
+        if (!h.holding) {
+          if (isHMoving) {
+            const armSwing = Math.sin(h.walkCycle) * 0.5;
+            entry.rig.leftShoulderPivot.rotation.x = -armSwing;
+            entry.rig.rightShoulderPivot.rotation.x = armSwing;
+          } else {
+            entry.rig.leftShoulderPivot.rotation.x = THREE.MathUtils.damp(
+              entry.rig.leftShoulderPivot.rotation.x,
+              0,
+              12,
+              dt
+            );
+            entry.rig.rightShoulderPivot.rotation.x = THREE.MathUtils.damp(
+              entry.rig.rightShoulderPivot.rotation.x,
+              0,
+              12,
+              dt
+            );
+          }
+        }
+        this.updateHeldVisual(entry.rig, h.holding);
       }
-      this.updateHeldVisual(this.helperRig, helper.holding);
-    }
+      void cfg;
+    });
 
-    // 2. Smooth Wide Follow Camera covering expanded left & right plaza
-    _camTarget.set(p.x * 0.72, 0.85, p.z * 0.45 - 0.3);
-    _camPos.set(p.x * 0.72 + 0.25, 9.75, p.z * 0.45 + 8.85);
-    this.camera.position.x = THREE.MathUtils.damp(
-      this.camera.position.x,
-      _camPos.x,
-      5.5,
-      dt
-    );
-    this.camera.position.y = THREE.MathUtils.damp(
-      this.camera.position.y,
-      _camPos.y,
-      5.5,
-      dt
-    );
-    this.camera.position.z = THREE.MathUtils.damp(
-      this.camera.position.z,
-      _camPos.z,
-      5.5,
-      dt
-    );
-    this.camera.lookAt(_camTarget);
+    // 2. Smooth Follow Camera(s): Solo vs True Vertical Split-Screen Co-Op
+    const updateCameraFollow = (
+      cam: THREE.PerspectiveCamera,
+      actor: Player3DState,
+      targetVec: THREE.Vector3,
+      posVec: THREE.Vector3
+    ) => {
+      const extraY = actor.z < -5.2 ? 0.9 : 0;
+      targetVec.set(actor.x * 0.94, 0.85, actor.z * 0.8 - 0.2);
+      posVec.set(actor.x * 0.94 + 0.25, 9.75 + extraY, actor.z * 0.8 + 8.9);
+      cam.position.x = THREE.MathUtils.damp(cam.position.x, posVec.x, 5.5, dt);
+      cam.position.y = THREE.MathUtils.damp(cam.position.y, posVec.y, 5.5, dt);
+      cam.position.z = THREE.MathUtils.damp(cam.position.z, posVec.z, 5.5, dt);
+      cam.lookAt(targetVec);
+    };
+
+    updateCameraFollow(this.camera, p, _camTarget, _camPos);
+    if (p2) {
+      updateCameraFollow(this.camera2, p2, _camTarget2, _camPos2);
+    }
 
     // 3. Chai Readi Cups, Water Level, 4 Free Spaces, Biscuits, Cupcakes & Level 2 Props
     const cupsLeft = Math.min(20, Math.max(0, shift.inventory.cups));
@@ -3842,7 +5890,14 @@ export class Chai3DSceneController {
         tv.plateMesh,
         tv.samosaMesh,
         tv.pakoraMesh,
-        trays[i] ?? null
+        trays[i] ?? null,
+        {
+          sodaGroup: tv.sodaGroup,
+          sodaIceCollar: tv.sodaIceCollar,
+          coneGroup: tv.coneGroup,
+          coneScoop: tv.coneScoop,
+          coneIceRing: tv.coneIceRing,
+        }
       );
     }
 
@@ -3915,6 +5970,79 @@ export class Chai3DSceneController {
       }
     }
 
+    // 3c. 3rd Readi (Cold Drinks & Ice Cream Cart) vs Reserved Plot Signboard
+    const hasColdCart = Boolean(world.hasColdCart);
+    this.coldCartVisuals.group.visible = hasColdCart;
+    this.coldCartVisuals.plotSignGroup.visible = !hasColdCart;
+    const coldTrays = shift.coldTrayItems ?? [null, null];
+    const chillerState = shift.chiller ?? {
+      status: 'idle' as const,
+      progress: 0,
+      chillingItem: null,
+    };
+    if (hasColdCart) {
+      const iceCount = Math.min(6, Math.max(0, shift.inventory.iceBlocks));
+      for (let i = 0; i < this.coldCartVisuals.iceBlockStockMeshes.length; i++) {
+        this.coldCartVisuals.iceBlockStockMeshes[i].visible = i < iceCount;
+      }
+      const sodaCount = Math.min(6, Math.max(0, shift.inventory.coldDrinkBottles));
+      for (let i = 0; i < this.coldCartVisuals.sodaStockMeshes.length; i++) {
+        this.coldCartVisuals.sodaStockMeshes[i].visible = i < sodaCount;
+      }
+      const coneCount = Math.min(6, Math.max(0, shift.inventory.iceCreamCones));
+      for (let i = 0; i < this.coldCartVisuals.coneStockMeshes.length; i++) {
+        this.coldCartVisuals.coneStockMeshes[i].visible = i < coneCount;
+      }
+      this.coldCartVisuals.mixFillMesh.visible = shift.inventory.iceCreamMix > 0;
+
+      for (let i = 0; i < this.coldCartVisuals.trayVisuals.length; i++) {
+        const tv = this.coldCartVisuals.trayVisuals[i];
+        applyCupContentsVisual(
+          tv.group,
+          tv.cupMeshes,
+          tv.fillMesh,
+          tv.sugarMesh,
+          tv.biscuitMesh,
+          tv.cupcakeMesh,
+          tv.plateMesh,
+          tv.samosaMesh,
+          tv.pakoraMesh,
+          coldTrays[i] ?? null,
+          {
+            sodaGroup: tv.sodaGroup,
+            sodaIceCollar: tv.sodaIceCollar,
+            coneGroup: tv.coneGroup,
+            coneScoop: tv.coneScoop,
+            coneIceRing: tv.coneIceRing,
+          }
+        );
+      }
+
+      const isChilling = chillerState.status === 'chilling';
+      const isChillReady = chillerState.status === 'ready';
+      this.coldCartVisuals.chillerCoil.visible = isChilling || isChillReady;
+      this.coldCartVisuals.chillerItemMesh.visible = isChilling || isChillReady;
+      const itemMat = this.coldCartVisuals.chillerItemMesh
+        .material as THREE.MeshStandardMaterial;
+      itemMat.color.setHex(
+        chillerState.chillingItem === 'ice_cream' ? 0xf9a8d4 : 0x38bdf8
+      );
+      if (isChilling) {
+        this.coldCartVisuals.chillerItemMesh.rotation.y = elapsedSec * 4.5;
+      }
+      for (let i = 0; i < this.coldCartVisuals.steamPuffs.length; i++) {
+        const puff = this.coldCartVisuals.steamPuffs[i];
+        if (isChilling || isChillReady) {
+          puff.visible = true;
+          const cyc = (elapsedSec * 1.4 + i * 0.33) % 1;
+          puff.position.y = 1.52 + cyc * 0.72;
+          puff.scale.setScalar(0.6 + cyc * 0.7);
+        } else {
+          puff.visible = false;
+        }
+      }
+    }
+
     // 4. Kettle Flame, Liquid Tint & Steam
     const isBrewing = shift.kettle.status === 'brewing';
     const isReady = shift.kettle.status === 'ready';
@@ -3950,6 +6078,82 @@ export class Chai3DSceneController {
       }
     }
 
+    // 4b. Sync Ordered Indoor Kitchen Visuals inside Rentable Shops (only visible when built via Wood Master)
+    for (const rb of this.rentableBuildingVisuals) {
+      const isKitchenBuilt = builtKitchenIds.has(rb.id);
+      if (!isKitchenBuilt) {
+        rb.kitchen.group.visible = false;
+        continue;
+      }
+      const isRented = world.rentedShops.some((r) => r.buildingId === rb.id);
+      const kv = rb.kitchen;
+
+      for (let i = 0; i < kv.cupMeshes.length; i++) {
+        kv.cupMeshes[i].visible = isRented ? i < cupsLeft : i < 10;
+      }
+      for (let i = 0; i < kv.biscuitStockMeshes.length; i++) {
+        kv.biscuitStockMeshes[i].visible = isRented ? i < biscuitCount : false;
+      }
+      for (let i = 0; i < kv.cupcakeStockMeshes.length; i++) {
+        kv.cupcakeStockMeshes[i].visible = isRented ? i < cupcakeCount : false;
+      }
+      kv.waterFillMesh.visible = isRented ? shift.inventory.water > 0 : true;
+      if (isRented) {
+        kv.waterFillMesh.scale.y = waterRatio;
+        kv.waterFillMesh.position.y = 1.0 + waterRatio * 0.15;
+      }
+
+      kv.coffeeJarGroup.visible =
+        isRented && world.unlockedRecipes.includes('coffee');
+      kv.milkCrateGroup.visible =
+        isRented && world.unlockedRecipes.includes('doodh_patti');
+      if (kv.milkCrateGroup.visible) {
+        const pk = Math.min(4, Math.max(0, shift.inventory.milkPackets));
+        for (let i = 0; i < kv.milkPacketMeshes.length; i++) {
+          kv.milkPacketMeshes[i].visible = i < pk;
+        }
+      }
+
+      for (let i = 0; i < kv.trayVisuals.length; i++) {
+        const tv = kv.trayVisuals[i];
+        applyCupContentsVisual(
+          tv.group,
+          tv.cupMeshes,
+          tv.fillMesh,
+          tv.sugarMesh,
+          tv.biscuitMesh,
+          tv.cupcakeMesh,
+          tv.plateMesh,
+          tv.samosaMesh,
+          tv.pakoraMesh,
+          isRented ? (trays[i] ?? null) : null
+        );
+      }
+
+      const shopKettleActive = isRented && (isBrewing || isReady);
+      kv.burnerFlame.visible = isRented && isBrewing;
+      kv.kettleCupMesh.visible = shopKettleActive;
+      if (shopKettleActive) {
+        const sCupMat = kv.kettleCupMesh
+          .material as THREE.MeshStandardMaterial;
+        sCupMat.color.copy(kCupMat.color);
+      }
+      kv.kettleGroup.position.y =
+        isRented && isBrewing ? 1.16 + Math.sin(elapsedSec * 28) * 0.012 : 1.16;
+
+      for (let i = 0; i < kv.steamPuffs.length; i++) {
+        const puff = kv.steamPuffs[i];
+        if (shopKettleActive) {
+          puff.visible = true;
+          const cycle = (elapsedSec * 1.4 + i * 0.25) % 1;
+          puff.position.y = 1.52 + cycle * 0.9;
+          puff.scale.setScalar(0.7 + cycle * 0.85);
+        } else {
+          puff.visible = false;
+        }
+      }
+    }
+
     // 5. Milkman Motorcycle Position & Wheels
     const mk = shift.milkman;
     this.milkmanVisuals.group.visible = mk.phase !== 'away';
@@ -3975,16 +6179,25 @@ export class Chai3DSceneController {
       }
     }
 
-    // 7. Placed Cafe Chairs & Tables + Supermarket Pickup Crate
+    // 7. Placed Cafe Chairs & Tables + Pickup Pads
     this.syncPlacedFurniture(world.furniture);
     this.supermarketVisuals.pickupCrate.visible =
       world.pendingFurniture.length > 0;
+    const woodOrders = world.woodOrders ?? [];
+    const readyWoodOrders = woodOrders.filter((o) => o.status === 'ready');
+    const buildingWoodOrders = woodOrders.filter((o) => o.status === 'building');
+    this.woodMasterVisuals.pickupCrate.visible =
+      readyWoodOrders.length > 0 || world.pendingFurniture.length > 0;
+    this.woodMasterVisuals.pickupPadMat.color.setHex(
+      readyWoodOrders.length > 0 ? 0x22c55e : 0xd97706
+    );
 
-    // 8. Walk-up & Seated Customers + Footpath Passerby Pedestrians
-    this.syncCustomerRigs(shift.customers, world.furniture, elapsedSec, dt);
+    // 8. Walk-up & Seated Customers + Beggar Kids + Footpath Passerby Pedestrians
+    this.syncCustomerRigs(shift.customers, world.furniture, world, elapsedSec, dt);
+    this.syncBeggarKidRigs(getShiftBeggarKids(shift), world, elapsedSec, dt);
     this.syncPedestrianRigs(shift.pedestrians ?? [], elapsedSec, dt);
 
-    // 9. Highlight Target Ring & Furniture Placement Preview Ring
+    // 9. Highlight Target Rings (P1 + Optional P2) & Furniture Placement Preview Ring
     if (heldFurnitureKind(p.holding)) {
       const drop = getFurnitureDropSpot(p);
       const valid = canPlaceFurnitureAt(drop.x, drop.z, world.furniture, world);
@@ -4008,70 +6221,273 @@ export class Chai3DSceneController {
       }
     }
 
-    this.renderer.render(this.scene, this.camera);
+    if (p2) {
+      if (heldFurnitureKind(p2.holding)) {
+        const drop2 = getFurnitureDropSpot(p2);
+        const valid2 = canPlaceFurnitureAt(drop2.x, drop2.z, world.furniture, world);
+        this.placementGhostRing2.visible = true;
+        this.placementGhostRing2.position.set(drop2.x, 0.13, drop2.z);
+        (
+          this.placementGhostRing2.material as THREE.MeshBasicMaterial
+        ).color.setHex(valid2 ? 0x22c55e : 0xef4444);
+        this.targetRing2.visible = false;
+      } else {
+        this.placementGhostRing2.visible = false;
+        const target2 = findInteractTargetForPlayer(p2, shift, world);
+        if (target2) {
+          this.targetRing2.visible = true;
+          const ring2Y =
+            target2.kind === 'car' || target2.kind === 'milkman' ? 0.04 : 0.14;
+          this.targetRing2.position.set(target2.x, ring2Y, target2.z);
+          const pulse2 = 1 + Math.cos(elapsedSec * 7) * 0.08;
+          this.targetRing2.scale.set(pulse2, pulse2, 1);
+        } else {
+          this.targetRing2.visible = false;
+        }
+      }
+    } else {
+      this.placementGhostRing2.visible = false;
+      this.targetRing2.visible = false;
+    }
 
-    // 10. Project 3D Screen Labels
+    // 9b. WebGL Render (Solo Full-Screen OR True Split-Screen Co-Op!)
     const w = this.container.clientWidth || window.innerWidth;
     const h = this.container.clientHeight || window.innerHeight;
-    const labels: ProjectedLabel[] = [];
+    const halfW = Math.floor(w / 2);
+    const rightW = w - halfW;
 
-    const project = (wx: number, wy: number, wz: number) => {
-      _projVec.set(wx, wy, wz);
-      _projVec.project(this.camera);
-      return {
-        x: ((_projVec.x + 1) / 2) * w,
-        y: (-(_projVec.y - 1) / 2) * h,
-        visible: _projVec.z > -1 && _projVec.z < 1,
-      };
+    const applyActorInteriorVisibility = (actor: Player3DState) => {
+      this.supermarketVisuals.roofGroup.visible = !isInsideBox(
+        actor,
+        SUPERMARKET_BOUNDS
+      );
+      for (const rb of this.rentableBuildingVisuals) {
+        rb.roofGroup.visible = !isInsideBox(actor, rb.bounds);
+      }
+      this.buyerShopVisuals.roofGroup.visible = !isInsideBox(
+        actor,
+        this.buyerShopVisuals.bounds
+      );
+      this.woodMasterVisuals.roofGroup.visible = !isInsideBox(
+        actor,
+        this.woodMasterVisuals.bounds
+      );
+      this.cycleVisuals.awningGroup.visible =
+        world.hasTeaStall !== false ? !isNearTeaCart(actor) : true;
+      this.snacksCartVisuals.awningGroup.visible = world.hasSnacksCart
+        ? !isNearSnacksCart(actor)
+        : true;
+      this.coldCartVisuals.awningGroup.visible = hasColdCart
+        ? !isNearColdCart(actor)
+        : true;
     };
 
+    if (p2) {
+      const splitAspectL = Math.max(0.2, halfW / Math.max(1, h));
+      const splitAspectR = Math.max(0.2, rightW / Math.max(1, h));
+      this.camera.aspect = splitAspectL;
+      this.camera.fov = 48;
+      this.camera.updateProjectionMatrix();
+      this.camera2.aspect = splitAspectR;
+      this.camera2.fov = 48;
+      this.camera2.updateProjectionMatrix();
+
+      // Left Viewport (Player 1)
+      applyActorInteriorVisibility(p);
+      this.renderer.setScissorTest(true);
+      this.renderer.setViewport(0, 0, halfW, h);
+      this.renderer.setScissor(0, 0, halfW, h);
+      this.renderer.render(this.scene, this.camera);
+
+      // Right Viewport (Player 2)
+      applyActorInteriorVisibility(p2);
+      this.renderer.setViewport(halfW, 0, rightW, h);
+      this.renderer.setScissor(halfW, 0, rightW, h);
+      this.renderer.render(this.scene, this.camera2);
+
+      this.renderer.setScissorTest(false);
+      this.renderer.setViewport(0, 0, w, h);
+    } else {
+      if (Math.abs(this.camera.aspect - w / Math.max(1, h)) > 0.01 || this.camera.fov !== 45) {
+        this.camera.aspect = w / Math.max(1, h);
+        this.camera.fov = 45;
+        this.camera.updateProjectionMatrix();
+      }
+      this.renderer.setScissorTest(false);
+      this.renderer.setViewport(0, 0, w, h);
+      this.renderer.render(this.scene, this.camera);
+    }
+
+    // 10. Project 3D Screen Labels (Per-Viewport when Co-Op Split-Screen is active)
+    const labels: ProjectedLabel[] = [];
+
+    const pushLabel = (
+      base: Omit<ProjectedLabel, 'x' | 'y' | 'visible'>,
+      wx: number,
+      wy: number,
+      wz: number
+    ) => {
+      if (!p2) {
+        _projVec.set(wx, wy, wz);
+        _projVec.project(this.camera);
+        labels.push({
+          ...base,
+          x: ((_projVec.x + 1) / 2) * w,
+          y: (-(_projVec.y - 1) / 2) * h,
+          visible:
+            _projVec.z > -1 &&
+            _projVec.z < 1 &&
+            _projVec.x >= -0.96 &&
+            _projVec.x <= 0.96,
+        });
+        return;
+      }
+
+      // Left Pane (Player 1)
+      _projVec.set(wx, wy, wz);
+      _projVec.project(this.camera);
+      if (
+        _projVec.z > -1 &&
+        _projVec.z < 1 &&
+        _projVec.x >= -0.9 &&
+        _projVec.x <= 0.9 &&
+        _projVec.y >= -0.95 &&
+        _projVec.y <= 0.95
+      ) {
+        labels.push({
+          ...base,
+          id: `${base.id}__p1`,
+          x: ((_projVec.x + 1) / 2) * halfW,
+          y: (-(_projVec.y - 1) / 2) * h,
+          visible: true,
+        });
+      }
+
+      // Right Pane (Player 2)
+      _projVec.set(wx, wy, wz);
+      _projVec.project(this.camera2);
+      if (
+        _projVec.z > -1 &&
+        _projVec.z < 1 &&
+        _projVec.x >= -0.9 &&
+        _projVec.x <= 0.9 &&
+        _projVec.y >= -0.95 &&
+        _projVec.y <= 0.95
+      ) {
+        labels.push({
+          ...base,
+          id: `${base.id}__p2`,
+          x: halfW + ((_projVec.x + 1) / 2) * rightW,
+          y: (-(_projVec.y - 1) / 2) * h,
+          visible: true,
+        });
+      }
+    };
+
+    const firstBuiltKitchenShop = RENTABLE_BUILDINGS.find(
+      (b) =>
+        builtKitchenIds.has(b.id) &&
+        world.rentedShops.some((r) => r.buildingId === b.id)
+    );
+    const activeRentedBuilding =
+      (activeInsideShopId &&
+      builtKitchenIds.has(activeInsideShopId) &&
+      world.rentedShops.some((r) => r.buildingId === activeInsideShopId)
+        ? RENTABLE_BUILDINGS.find((b) => b.id === activeInsideShopId)
+        : null) ??
+      (world.hasTeaStall === false ? firstBuiltKitchenShop ?? null : null);
+    const activeKitchenStations = activeRentedBuilding
+      ? getShopKitchenStations(activeRentedBuilding)
+      : null;
+
     if (shift.kettle.status !== 'idle') {
-      const kp = project(STATIONS.kettle.x, 2.2, STATIONS.kettle.z);
-      const kettleInfo = shift.kettle.brewingDrink
-        ? DRINK_CATALOG[shift.kettle.brewingDrink]
-        : undefined;
-      const dName = kettleInfo ? kettleInfo.name : 'Chai';
-      labels.push({
-        id: 'kettle',
-        kind: 'kettle',
-        ...kp,
-        text:
-          shift.kettle.status === 'ready'
-            ? `${dName} Ready! [E]`
-            : `Boiling ${dName} ${Math.round(shift.kettle.progress * 100)}%`,
-        progress: shift.kettle.progress,
-      });
+      const kettlePos = activeKitchenStations
+        ? activeKitchenStations.kettle
+        : STATIONS.kettle;
+      if (activeKitchenStations || world.hasTeaStall !== false) {
+        const kettleInfo = shift.kettle.brewingDrink
+          ? DRINK_CATALOG[shift.kettle.brewingDrink]
+          : undefined;
+        const dName = kettleInfo ? kettleInfo.name : 'Chai';
+        pushLabel(
+          {
+            id: 'kettle',
+            kind: 'kettle',
+            text:
+              shift.kettle.status === 'ready'
+                ? `${dName} Ready! [E]`
+                : `Boiling ${dName} ${Math.round(shift.kettle.progress * 100)}%`,
+            progress: shift.kettle.progress,
+          },
+          kettlePos.x,
+          2.2,
+          kettlePos.z
+        );
+      }
     }
 
     if (world.hasSnacksCart && shift.fryer.status !== 'idle') {
-      const fp = project(SNACK_STATIONS.kadhai.x, 2.15, SNACK_STATIONS.kadhai.z);
       const fInfo = shift.fryer.fryingSnack
         ? DRINK_CATALOG[shift.fryer.fryingSnack]
         : undefined;
       const sName = fInfo ? fInfo.name : 'Samosa';
-      labels.push({
-        id: 'fryer',
-        kind: 'fryer',
-        ...fp,
-        text:
-          shift.fryer.status === 'ready'
-            ? `Hot ${sName} Ready! [E]`
-            : `Frying ${sName} ${Math.round(shift.fryer.progress * 100)}%`,
-        progress: shift.fryer.progress,
-      });
+      pushLabel(
+        {
+          id: 'fryer',
+          kind: 'fryer',
+          text:
+            shift.fryer.status === 'ready'
+              ? `Hot ${sName} Ready! [E]`
+              : `Frying ${sName} ${Math.round(shift.fryer.progress * 100)}%`,
+          progress: shift.fryer.progress,
+        },
+        SNACK_STATIONS.kadhai.x,
+        2.15,
+        SNACK_STATIONS.kadhai.z
+      );
     }
 
-    for (let idx = 0; idx < TRAY_SPOTS.length; idx++) {
-      const item = trays[idx];
-      if (item && HELD_ITEM_LABELS[item]) {
-        const spot = TRAY_SPOTS[idx];
-        const tp = project(spot.x, 1.52, spot.z);
-        labels.push({
-          id: `counter_tray_${idx}`,
-          kind: 'counter_tray',
-          ...tp,
-          text: HELD_ITEM_LABELS[item],
-        });
+    if (hasColdCart && chillerState.status !== 'idle') {
+      const cInfo = chillerState.chillingItem
+        ? DRINK_CATALOG[chillerState.chillingItem]
+        : undefined;
+      const cName = cInfo ? cInfo.name : 'Cold Drink';
+      pushLabel(
+        {
+          id: 'chiller',
+          kind: 'chiller',
+          text:
+            chillerState.status === 'ready'
+              ? `${cName} Frozen! [E]`
+              : `Chilling ${cName} ${Math.round(chillerState.progress * 100)}%`,
+          progress: chillerState.progress,
+        },
+        COLD_STATIONS.chiller.x,
+        2.15,
+        COLD_STATIONS.chiller.z
+      );
+      void CHILLING_DURATION;
+    }
+
+    const activeTraySpots = activeKitchenStations
+      ? activeKitchenStations.trays
+      : TRAY_SPOTS;
+    if (activeKitchenStations || world.hasTeaStall !== false) {
+      for (let idx = 0; idx < activeTraySpots.length; idx++) {
+        const item = trays[idx];
+        if (item && HELD_ITEM_LABELS[item]) {
+          const spot = activeTraySpots[idx];
+          pushLabel(
+            {
+              id: `counter_tray_${idx}`,
+              kind: 'counter_tray',
+              text: HELD_ITEM_LABELS[item],
+            },
+            spot.x,
+            1.52,
+            spot.z
+          );
+        }
       }
     }
 
@@ -4080,184 +6496,589 @@ export class Chai3DSceneController {
         const item = snackTrays[idx];
         if (item && HELD_ITEM_LABELS[item]) {
           const spot = SNACK_TRAY_SPOTS[idx];
-          const tp = project(spot.x, 1.52, spot.z);
-          labels.push({
-            id: `snack_tray_${idx}`,
-            kind: 'counter_tray',
-            ...tp,
-            text: HELD_ITEM_LABELS[item],
-          });
+          pushLabel(
+            {
+              id: `snack_tray_${idx}`,
+              kind: 'counter_tray',
+              text: HELD_ITEM_LABELS[item],
+            },
+            spot.x,
+            1.52,
+            spot.z
+          );
         }
       }
     } else {
-      const spPos = project(SNACKS_CART_ANCHOR.x, 2.05, SNACKS_CART_ANCHOR.z);
       const hasSnacksRecipe =
         world.unlockedRecipes.includes('samosa') ||
         world.unlockedRecipes.includes('pakora');
-      labels.push({
-        id: 'snacks_plot',
-        kind: 'snacks_plot',
-        ...spPos,
-        text: hasSnacksRecipe
-          ? `Buy 2nd Readi (${formatMoney(SNACKS_CART_PRICE_CENTS)}) [E]`
-          : '2nd Readi Spot (Learn Samosa Recipe First)',
-      });
+      pushLabel(
+        {
+          id: 'snacks_plot',
+          kind: 'snacks_plot',
+          text: hasSnacksRecipe
+            ? `Order 2nd Readi (${formatMoney(SNACKS_CART_PRICE_CENTS)}) at Wood Master [E]`
+            : '2nd Readi Spot (Learn Samosa Recipe First)',
+        },
+        SNACKS_CART_ANCHOR.x,
+        2.05,
+        SNACKS_CART_ANCHOR.z
+      );
     }
 
-    // Poor Kid / Chotu Helper Label
-    const hp = project(helper.x, helperSitting ? 1.48 : 1.58, helper.z);
-    if (helperSitting) {
-      labels.push({
-        id: 'helper_kid',
-        kind: 'helper',
-        ...hp,
-        text: 'Poor Boy (Chotu) [E]',
-        subText: '$0.25 Help / Hire',
-      });
+    if (hasColdCart) {
+      for (let idx = 0; idx < COLD_TRAY_SPOTS.length; idx++) {
+        const item = coldTrays[idx];
+        if (item && HELD_ITEM_LABELS[item]) {
+          const spot = COLD_TRAY_SPOTS[idx];
+          pushLabel(
+            {
+              id: `cold_tray_${idx}`,
+              kind: 'counter_tray',
+              text: HELD_ITEM_LABELS[item],
+            },
+            spot.x,
+            1.52,
+            spot.z
+          );
+        }
+      }
     } else {
-      labels.push({
-        id: 'helper_kid',
-        kind: 'helper',
-        ...hp,
-        text: 'Chotu (Helper)',
-        subText: helper.statusNote || 'Working',
-      });
+      const hasColdRecipe =
+        world.unlockedRecipes.includes('cold_drink') ||
+        world.unlockedRecipes.includes('ice_cream');
+      pushLabel(
+        {
+          id: 'cold_plot',
+          kind: 'cold_plot',
+          text: hasColdRecipe
+            ? `Order 3rd Cold Readi (${formatMoney(COLD_CART_PRICE_CENTS)}) at Wood Master [E]`
+            : '3rd Cold Readi Spot (Learn Cold Recipe First)',
+        },
+        COLD_CART_ANCHOR.x,
+        2.05,
+        COLD_CART_ANCHOR.z
+      );
+    }
+
+    // Stall / Kitchen "OUT OF STOCK" Labels when ingredients are missing
+    const outOfStockDrinks = (['tea', 'doodh_patti', 'coffee'] as const).filter(
+      (d) =>
+        world.unlockedRecipes.includes(d) &&
+        isMenuItemEnabled(world, d) &&
+        !getDrinkStockStatus(d, shift).inStock
+    );
+    if (
+      outOfStockDrinks.length > 0 &&
+      (activeKitchenStations || world.hasTeaStall !== false)
+    ) {
+      const wx = activeKitchenStations
+        ? (activeKitchenStations.kettle.x +
+            activeKitchenStations.cupcake_box.x) /
+          2
+        : CYCLE_ANCHOR.x;
+      const wy = activeKitchenStations ? 2.42 : 2.78;
+      const wz = activeKitchenStations
+        ? activeKitchenStations.kettle.z
+        : CYCLE_ANCHOR.z;
+      pushLabel(
+        {
+          id: 'stall_out_of_stock',
+          kind: 'out_of_stock',
+          text: 'OUT OF STOCK',
+          subText: outOfStockDrinks
+            .map(
+              (d) =>
+                `${DRINK_CATALOG[d].name} (${getDrinkStockStatus(d, shift).missing.join(', ')})`
+            )
+            .join(' · '),
+          urgent: true,
+        },
+        wx,
+        wy,
+        wz
+      );
+    }
+
+    if (world.hasSnacksCart) {
+      const outOfStockSnacks = (['samosa', 'pakora'] as const).filter(
+        (d) =>
+          world.unlockedRecipes.includes(d) &&
+          isMenuItemEnabled(world, d) &&
+          !getDrinkStockStatus(d, shift).inStock
+      );
+      if (outOfStockSnacks.length > 0) {
+        pushLabel(
+          {
+            id: 'snacks_out_of_stock',
+            kind: 'out_of_stock',
+            text: 'OUT OF STOCK',
+            subText: outOfStockSnacks
+              .map(
+                (d) =>
+                  `${DRINK_CATALOG[d].name} (${getDrinkStockStatus(d, shift).missing.join(', ')})`
+              )
+              .join(' · '),
+            urgent: true,
+          },
+          SNACKS_CART_ANCHOR.x,
+          2.68,
+          SNACKS_CART_ANCHOR.z
+        );
+      }
+    }
+
+    if (hasColdCart) {
+      const outOfStockCold = (['cold_drink', 'ice_cream'] as const).filter(
+        (d) =>
+          world.unlockedRecipes.includes(d) &&
+          isMenuItemEnabled(world, d) &&
+          !getDrinkStockStatus(d, shift).inStock
+      );
+      if (outOfStockCold.length > 0) {
+        pushLabel(
+          {
+            id: 'cold_out_of_stock',
+            kind: 'out_of_stock',
+            text: 'OUT OF STOCK',
+            subText: outOfStockCold
+              .map(
+                (d) =>
+                  `${DRINK_CATALOG[d].name} (${getDrinkStockStatus(d, shift).missing.join(', ')})`
+              )
+              .join(' · '),
+            urgent: true,
+          },
+          COLD_CART_ANCHOR.x,
+          2.68,
+          COLD_CART_ANCHOR.z
+        );
+      }
+    }
+
+    // All 3 Poor Kid / Helper NPC Labels (Mat, Hungry Begging at Readi, Eating Free, Corner Marketing, Hired)
+    for (const h of getShiftHelpers(shift)) {
+      const hId: HelperNpcId = h.id ?? 'chotu';
+      const cfg = HELPER_NPCS[hId];
+      const begState = h.beggingState ?? 'at_mat';
+      if (h.status === 'sitting') {
+        if (begState === 'begging_at_stall') {
+          const bDrink = h.beggingDrink ?? 'tea';
+          const info = DRINK_CATALOG[bDrink] ?? DRINK_CATALOG.tea;
+          const secs = Math.ceil(h.beggingPatience ?? 0);
+          const ratio = Math.max(
+            0,
+            (h.beggingPatience ?? 0) / Math.max(1, h.beggingMaxPatience ?? 120)
+          );
+          pushLabel(
+            {
+              id: `helper_kid_${hId}`,
+              kind: 'beggar_kid',
+              text: `${cfg.name} (Hungry) · Free ${info.name} ($0)`,
+              subText: h.heldByHelperName
+                ? `${h.heldByHelperName} Holding (${secs}s) [E]/[F]`
+                : `${secs}s [E]/[F]`,
+              progress: ratio,
+              urgent: secs < 25,
+            },
+            h.x,
+            1.65,
+            h.z
+          );
+        } else if (begState === 'walking_to_stall') {
+          pushLabel(
+            {
+              id: `helper_kid_${hId}`,
+              kind: 'beggar_kid',
+              text: `${cfg.name} (Hungry · Walking to Readi)`,
+              subText: 'Free Meal -> Corner Marketing',
+            },
+            h.x,
+            1.58,
+            h.z
+          );
+        } else if (begState === 'eating_free') {
+          pushLabel(
+            {
+              id: `helper_kid_${hId}`,
+              kind: 'beggar_kid',
+              text: `${cfg.name} · Enjoying Free Meal!`,
+              subText: 'Marketing Next',
+            },
+            h.x,
+            1.65,
+            h.z
+          );
+        } else if (begState === 'returning_marketing') {
+          pushLabel(
+            {
+              id: `helper_kid_${hId}`,
+              kind: 'helper',
+              text: `${cfg.name} -> Corner Spot`,
+              subText: 'Starting Marketing!',
+            },
+            h.x,
+            1.58,
+            h.z
+          );
+        } else if (begState === 'marketing') {
+          const secs = Math.ceil(h.marketingTimer ?? 0);
+          pushLabel(
+            {
+              id: `helper_kid_${hId}`,
+              kind: 'beggar_kid',
+              text: `${cfg.name} · MARKETING! (+Sales)`,
+              subText: `${secs}s · Calling Crowd`,
+            },
+            h.x,
+            1.72,
+            h.z
+          );
+        } else {
+          const subText =
+            cfg.requiresSnacksCart && !world.hasSnacksCart
+              ? '$0.25 Help (Samosa Cart Unlocks Hire)'
+              : '$0.25 Help / Hire';
+          pushLabel(
+            {
+              id: `helper_kid_${hId}`,
+              kind: 'helper',
+              text:
+                cfg.gender === 'girl'
+                  ? `Poor Girl (${cfg.name}) [E]`
+                  : `Poor Boy (${cfg.name}) [E]`,
+              subText,
+            },
+            h.x,
+            1.48,
+            h.z
+          );
+        }
+      } else {
+        pushLabel(
+          {
+            id: `helper_kid_${hId}`,
+            kind: 'helper',
+            text:
+              cfg.role === 'snacks_only'
+                ? `${cfg.name} (Samosa Helper)`
+                : `${cfg.name} (Helper)`,
+            subText: h.statusNote || 'Working',
+          },
+          h.x,
+          1.58,
+          h.z
+        );
+      }
     }
 
     // Building Owner Labels (for all 3 Rentable Street Shops)
     for (const b of RENTABLE_BUILDINGS) {
       const rec = world.rentedShops.find((r) => r.buildingId === b.id);
       const isDue = Boolean(rec && world.day >= rec.nextRentDueDay);
-      const bop = project(b.ownerPos.x, 2.05, b.ownerPos.z);
-      labels.push({
-        id: `building_owner_${b.id}`,
-        kind: 'building_owner',
-        ...bop,
-        text: !rec
-          ? `${b.ownerName} · ${b.shopName}`
-          : isDue
-            ? `${b.ownerName} · RENT DUE!`
-            : `${b.shopName} (Yours)`,
-        subText: !rec
-          ? `${formatMoney(b.weeklyRentCents)}/wk [E]`
-          : isDue
-            ? `${formatMoney(b.weeklyRentCents)} [E]`
-            : `Paid Day ${rec.nextRentDueDay}`,
-        urgent: isDue,
-      });
+      pushLabel(
+        {
+          id: `building_owner_${b.id}`,
+          kind: 'building_owner',
+          text: !rec
+            ? `${b.ownerName} · ${b.shopName}`
+            : isDue
+              ? `${b.ownerName} · RENT DUE!`
+              : `${b.shopName} (Yours)`,
+          subText: !rec
+            ? `${formatMoney(b.weeklyRentCents)}/wk [E]`
+            : isDue
+              ? `${formatMoney(b.weeklyRentCents)} [E]`
+              : `Paid Day ${rec.nextRentDueDay}`,
+          urgent: isDue,
+        },
+        b.ownerPos.x,
+        2.05,
+        b.ownerPos.z
+      );
+    }
+
+    // Second-Hand Gear Buyer NPC Label
+    pushLabel(
+      {
+        id: 'gear_buyer',
+        kind: 'gear_buyer',
+        text: `${BUYER_SHOP.buyerName} · Gear Buyer`,
+        subText: 'Sell -50% [E]',
+      },
+      BUYER_SHOP.buyerPos.x,
+      2.05,
+      BUYER_SHOP.buyerPos.z
+    );
+
+    // Wood Master Workshop NPC Label (Highlights urgently when any order is READY!)
+    const nextReady = readyWoodOrders[0];
+    const nextBuilding = buildingWoodOrders[0];
+    pushLabel(
+      {
+        id: 'wood_master',
+        kind: 'wood_master',
+        text: nextReady
+          ? `${WOOD_MASTER_SHOP.masterName} · ORDER READY!`
+          : `${WOOD_MASTER_SHOP.masterName} · Wood Master`,
+        subText: nextReady
+          ? `Receive ${nextReady.label} [E]`
+          : nextBuilding
+            ? `Building ${Math.ceil(nextBuilding.remainingSec)}s`
+            : 'Order Craft [E]',
+        urgent: Boolean(nextReady),
+      },
+      WOOD_MASTER_SHOP.masterPos.x,
+      2.05,
+      WOOD_MASTER_SHOP.masterPos.z
+    );
+
+    // Co-Op Partner Overhead Markers when 2-Player Co-Op is Active
+    if (p2) {
+      pushLabel(
+        {
+          id: 'coop_p1',
+          kind: 'coop_partner',
+          text: 'P1 (You)',
+        },
+        p.x,
+        p.sittingChairId ? 1.85 : 2.02,
+        p.z
+      );
+      pushLabel(
+        {
+          id: 'coop_p2',
+          kind: 'coop_partner',
+          text: 'P2 (Partner)',
+        },
+        p2.x,
+        p2.sittingChairId ? 1.85 : 2.02,
+        p2.z
+      );
     }
 
     for (const c of shift.customers) {
       if (c.status === 'waiting') {
-        const cp = project(c.x, c.seatedChairId ? 1.85 : 1.72, c.z);
         const ratio = Math.max(0, c.patience / c.maxPatience);
         const info = DRINK_CATALOG[c.orderDrink] ?? DRINK_CATALOG.tea;
-        labels.push({
-          id: c.id,
-          kind: 'customer',
-          ...cp,
-          text: `${info.name} ${formatMoney(info.priceCents)}`,
-          subText: ratio < 0.28 ? 'HURRY' : undefined,
-          progress: ratio,
-          urgent: ratio < 0.28,
-        });
+        const priceCents = applySalesBoostCents(info.priceCents, shift);
+        pushLabel(
+          {
+            id: c.id,
+            kind: 'customer',
+            text: `${info.name} ${formatMoney(priceCents)}`,
+            subText: ratio < 0.28 ? 'HURRY' : undefined,
+            progress: ratio,
+            urgent: ratio < 0.28,
+          },
+          c.x,
+          c.seatedChairId ? 1.85 : 1.72,
+          c.z
+        );
       }
     }
 
     if (owner.phase === 'ordering_chai') {
-      const op = project(owner.x, 1.75, owner.z);
       const ratio = Math.max(0, owner.patience / owner.maxPatience);
       const info = DRINK_CATALOG[owner.orderDrink] ?? DRINK_CATALOG.tea;
-      labels.push({
-        id: 'owner_customer',
-        kind: 'owner',
-        ...op,
-        text: `Mart Owner: ${info.name} ${formatMoney(info.priceCents)}`,
-        subText: ratio < 0.28 ? 'HURRY' : '[E]',
-        progress: ratio,
-        urgent: ratio < 0.28,
-      });
-    } else if (owner.phase === 'walking_to_stall' || owner.phase === 'stroll_outside') {
-      const op = project(owner.x, 2.05, owner.z);
-      labels.push({
-        id: 'owner_roam',
-        kind: 'owner',
-        ...op,
-        text:
-          owner.phase === 'walking_to_stall'
-            ? 'Mart Owner (Coming for Chai)'
-            : 'Mart Owner',
-      });
+      const priceCents = applySalesBoostCents(info.priceCents, shift);
+      pushLabel(
+        {
+          id: 'owner_customer',
+          kind: 'owner',
+          text: `Mart Owner: ${info.name} ${formatMoney(priceCents)}`,
+          subText: ratio < 0.28 ? 'HURRY' : '[E]/[F]',
+          progress: ratio,
+          urgent: ratio < 0.28,
+        },
+        owner.x,
+        1.75,
+        owner.z
+      );
+    } else if (
+      owner.phase === 'walking_to_stall' ||
+      owner.phase === 'stroll_outside'
+    ) {
+      pushLabel(
+        {
+          id: 'owner_roam',
+          kind: 'owner',
+          text:
+            owner.phase === 'walking_to_stall'
+              ? 'Mart Owner (Coming to Buy)'
+              : 'Mart Owner',
+        },
+        owner.x,
+        2.05,
+        owner.z
+      );
+    }
+
+    for (const v of shopVisitors) {
+      if (v.phase === 'at_shop') continue;
+      if (v.phase === 'ordering') {
+        const ratio = Math.max(0, v.patience / Math.max(1, v.maxPatience));
+        const info = DRINK_CATALOG[v.orderDrink] ?? DRINK_CATALOG.tea;
+        const priceCents = applySalesBoostCents(info.priceCents, shift);
+        pushLabel(
+          {
+            id: `visitor_${v.id}`,
+            kind: 'shop_visitor',
+            text: `${v.name}: ${info.name} ${formatMoney(priceCents)}`,
+            subText: ratio < 0.28 ? 'HURRY' : '[E]/[F]',
+            progress: ratio,
+            urgent: ratio < 0.28,
+          },
+          v.x,
+          1.78,
+          v.z
+        );
+      } else if (
+        v.phase === 'walking_to_stall' ||
+        v.phase === 'returning_to_shop'
+      ) {
+        pushLabel(
+          {
+            id: `visitor_roam_${v.id}`,
+            kind: 'shop_visitor',
+            text:
+              v.phase === 'walking_to_stall'
+                ? `${v.name} (Coming to Buy)`
+                : v.name,
+          },
+          v.x,
+          2.0,
+          v.z
+        );
+      }
+    }
+
+    for (const bk of getShiftBeggarKids(shift)) {
+      if (bk.status === 'waiting') {
+        const ratio = Math.max(0, bk.patience / Math.max(1, bk.maxPatience));
+        const info = DRINK_CATALOG[bk.orderDrink] ?? DRINK_CATALOG.tea;
+        const secs = Math.ceil(bk.patience);
+        pushLabel(
+          {
+            id: `beggar_${bk.id}`,
+            kind: 'beggar_kid',
+            text: `Poor Kid · Free ${info.name} ($0)`,
+            subText: bk.heldByHelperName
+              ? `${bk.heldByHelperName} Holding (${secs}s) [E]/[F]`
+              : `${secs}s [E]/[F]`,
+            progress: ratio,
+            urgent: secs < 25,
+          },
+          bk.x,
+          1.48,
+          bk.z
+        );
+      } else if (bk.status === 'walking_in') {
+        pushLabel(
+          {
+            id: `beggar_in_${bk.id}`,
+            kind: 'beggar_kid',
+            text: 'Poor Kid (Free Meal · +10% Sales)',
+          },
+          bk.x,
+          1.48,
+          bk.z
+        );
+      } else if (bk.status === 'marketing') {
+        const secs = Math.ceil(bk.marketingTimer ?? 0);
+        pushLabel(
+          {
+            id: `beggar_mkt_${bk.id}`,
+            kind: 'beggar_kid',
+            text: 'Poor Kid · MARKETING! (+10% Sales)',
+            subText: `${secs}s · Calling Crowd`,
+          },
+          bk.x,
+          1.66,
+          bk.z
+        );
+      }
     }
 
     if (car.phase === 'waiting') {
-      const carP = project(car.x, 1.85, car.z);
       const ratio = Math.max(0, car.patience / car.maxPatience);
       const info = DRINK_CATALOG[car.orderDrink] ?? DRINK_CATALOG.tea;
-      labels.push({
-        id: 'car_customer',
-        kind: 'car',
-        ...carP,
-        text: `Car: ${car.qtyServed}/${car.qtyTotal} ${info.name} (${formatMoney(info.priceCents)})`,
-        subText: ratio < 0.28 ? 'HURRY' : '[E]/[F]',
-        progress: ratio,
-        urgent: ratio < 0.28,
-      });
+      const priceCents = applySalesBoostCents(info.priceCents, shift);
+      pushLabel(
+        {
+          id: 'car_customer',
+          kind: 'car',
+          text: `Car: ${car.qtyServed}/${car.qtyTotal} ${info.name} (${formatMoney(priceCents)})`,
+          subText: ratio < 0.28 ? 'HURRY' : '[E]/[F]',
+          progress: ratio,
+          urgent: ratio < 0.28,
+        },
+        car.x,
+        1.85,
+        car.z
+      );
     }
 
     if (mk.phase === 'parked') {
-      const mp = project(mk.x, 2.15, mk.z);
-      labels.push({
-        id: 'milkman',
-        kind: 'milkman',
-        ...mp,
-        text: 'Milkman [E] Milk Packets',
-        subText: `${Math.ceil(mk.timer)}s`,
-      });
+      pushLabel(
+        {
+          id: 'milkman',
+          kind: 'milkman',
+          text: 'Milkman [E] Milk Packets',
+          subText: `${Math.ceil(mk.timer)}s`,
+        },
+        mk.x,
+        2.15,
+        mk.z
+      );
     }
 
-    const wtPos = project(WATER_TAP_POS.x, 1.65, WATER_TAP_POS.z);
-    labels.push({
-      id: 'water_tap',
-      kind: 'water_tap',
-      ...wtPos,
-      text: 'Free Water [E]',
-    });
+    pushLabel(
+      {
+        id: 'water_tap',
+        kind: 'water_tap',
+        text: 'Free Water [E]',
+      },
+      WATER_TAP_POS.x,
+      1.65,
+      WATER_TAP_POS.z
+    );
 
-    const tbPos = project(TRASH_BIN_POS.x, 1.35, TRASH_BIN_POS.z);
-    labels.push({
-      id: 'trash_bin',
-      kind: 'trash',
-      ...tbPos,
-      text: 'Trash Bin',
-    });
+    pushLabel(
+      {
+        id: 'trash_bin',
+        kind: 'trash',
+        text: 'Trash Bin',
+      },
+      TRASH_BIN_POS.x,
+      1.35,
+      TRASH_BIN_POS.z
+    );
 
-    const smPos = project(
+    pushLabel(
+      {
+        id: 'supermarket',
+        kind: 'supermarket',
+        text: isOwnerInsideSupermarket(owner)
+          ? 'Chai Supermarket [E]'
+          : 'Supermarket (Owner Away)',
+      },
       SUPERMARKET_COUNTER_POS.x + 1.9,
       2.45,
       SUPERMARKET_COUNTER_POS.z - 0.4
     );
-    labels.push({
-      id: 'supermarket',
-      kind: 'supermarket',
-      ...smPos,
-      text: isOwnerInsideSupermarket(owner)
-        ? 'Chai Supermarket [E]'
-        : 'Supermarket (Owner Away)',
-    });
 
     if (world.pendingFurniture.length > 0) {
-      const pkPos = project(
-        SUPERMARKET_PICKUP_POS.x,
+      pushLabel(
+        {
+          id: 'wood_master_pickup',
+          kind: 'supermarket_pickup',
+          text: `Pickup Furniture (${world.pendingFurniture.length}) [E]`,
+        },
+        WOOD_MASTER_SHOP.pickupPos.x,
         1.5,
-        SUPERMARKET_PICKUP_POS.z
+        WOOD_MASTER_SHOP.pickupPos.z
       );
-      labels.push({
-        id: 'supermarket_pickup',
-        kind: 'supermarket_pickup',
-        ...pkPos,
-        text: `Pickup Furniture (${world.pendingFurniture.length}) [E]`,
-      });
     }
 
     return labels;

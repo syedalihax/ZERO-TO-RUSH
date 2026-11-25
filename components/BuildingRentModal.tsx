@@ -165,9 +165,15 @@ export default function BuildingRentModal({
             </div>
           </div>
 
-          <div className="text-xs text-[#D6C7B5] bg-[#1B1410] border border-[#D4A373]/15 rounded-lg p-3">
-            Rented shops also boost street customer traffic (+12% per shop) and
-            allow placing Cafe Chairs &amp; Tables right inside the shop floor!
+          <div className="text-xs text-[#D6C7B5] bg-[#1B1410] border border-[#D4A373]/15 rounded-lg p-3 leading-relaxed">
+            Spacious 3x larger{' '}
+            <span className="font-semibold text-[#FFFDF9]">empty shop floor</span>{' '}
+            with space for a Shop Kitchen, 4 Chairs &amp; 2 Tables (+12% street
+            customer traffic &amp; daily profit bonus!). Order your{' '}
+            <span className="font-semibold text-[#FDE68A]">
+              Shop Kitchen, Chairs &amp; Tables
+            </span>{' '}
+            from <span className="font-semibold text-[#FDE68A]">Wood Master Workshop (Ustad Karim)</span>.
           </div>
 
           {/* Actions */}
