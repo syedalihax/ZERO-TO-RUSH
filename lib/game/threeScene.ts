@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
+  BANK_SHOP,
   BUYER_SHOP,
   CAR_PARK_POS,
   CHILLING_DURATION,
@@ -3670,6 +3671,118 @@ function buildBuyerShopGroup(
   };
 }
 
+interface BankVisuals {
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
+  roofGroup: THREE.Group;
+  bankerRig: CharacterRig;
+}
+
+function buildBankShopGroup(scene: THREE.Scene, maxAniso: number): BankVisuals {
+  const group = new THREE.Group();
+  const { minX, maxX, minZ, maxZ } = BANK_SHOP.bounds;
+  const w = maxX - minX;
+  const d = maxZ - minZ;
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.62 });
+  const wallMat = new THREE.MeshStandardMaterial({ color: BANK_SHOP.wallHex, roughness: 0.82 });
+  const awningMat = new THREE.MeshStandardMaterial({ color: BANK_SHOP.awningHex, roughness: 0.58 });
+  const trimMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.45, roughness: 0.38 });
+  const glowStripMat = new THREE.MeshStandardMaterial({ color: 0xdbeafe, emissive: 0x2563eb, emissiveIntensity: 0.85 });
+
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.05, d), floorMat);
+  floor.position.set(cx, 0.115, cz);
+  floor.receiveShadow = true;
+  group.add(floor);
+
+  const doorCenter = (BANK_SHOP.doorMinX + BANK_SHOP.doorMaxX) / 2;
+  const doorWidth = BANK_SHOP.doorMaxX - BANK_SHOP.doorMinX;
+  const welcomeMat = new THREE.Mesh(new THREE.BoxGeometry(doorWidth - 0.1, 0.025, 0.55), awningMat);
+  welcomeMat.position.set(doorCenter, 0.138, maxZ + 0.08);
+  group.add(welcomeMat);
+
+  const backWall = new THREE.Mesh(new THREE.BoxGeometry(w, 2.7, 0.24), wallMat);
+  backWall.position.set(cx, 1.46, minZ);
+  backWall.castShadow = true;
+  backWall.receiveShadow = true;
+  group.add(backWall);
+
+  const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.24, 2.7, d), wallMat);
+  leftWall.position.set(minX, 1.46, cz);
+  leftWall.castShadow = true;
+  group.add(leftWall);
+
+  const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.24, 2.7, d), wallMat);
+  rightWall.position.set(maxX, 1.46, cz);
+  rightWall.castShadow = true;
+  group.add(rightWall);
+
+  const leftFrontW = BANK_SHOP.doorMinX - minX;
+  if (leftFrontW > 0.2) {
+    const lfw = new THREE.Mesh(new THREE.BoxGeometry(leftFrontW, 2.7, 0.24), wallMat);
+    lfw.position.set(minX + leftFrontW / 2, 1.46, maxZ);
+    lfw.castShadow = true;
+    group.add(lfw);
+  }
+  const rightFrontW = maxX - BANK_SHOP.doorMaxX;
+  if (rightFrontW > 0.2) {
+    const rfw = new THREE.Mesh(new THREE.BoxGeometry(rightFrontW, 2.7, 0.24), wallMat);
+    rfw.position.set(BANK_SHOP.doorMaxX + rightFrontW / 2, 1.46, maxZ);
+    rfw.castShadow = true;
+    group.add(rfw);
+  }
+  for (const px of [BANK_SHOP.doorMinX, BANK_SHOP.doorMaxX]) {
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.7, 0.24), trimMat);
+    pillar.position.set(px, 1.46, maxZ);
+    group.add(pillar);
+  }
+
+  const glowBar = new THREE.Mesh(new THREE.BoxGeometry(w - 0.6, 0.1, 0.14), glowStripMat);
+  glowBar.position.set(cx, 2.55, minZ + 0.24);
+  group.add(glowBar);
+
+  const signTex = makeShopSignTexture(
+    'CITY MICRO BANK',
+    'LOAN • EASY TERMS • LOW INTEREST WITH GIRWI',
+    '#1D4ED8',
+    maxAniso
+  );
+  const sign = new THREE.Mesh(
+    new THREE.PlaneGeometry(w - 0.8, 0.85),
+    new THREE.MeshBasicMaterial({ map: signTex, transparent: true })
+  );
+  sign.position.set(cx, 2.18, maxZ + 0.14);
+  group.add(sign);
+
+  const counter = new THREE.Mesh(
+    new THREE.BoxGeometry(2.2, 0.78, 0.7),
+    new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.45, metalness: 0.2 })
+  );
+  counter.position.set(BANK_SHOP.counterPos.x, 0.5, BANK_SHOP.counterPos.z);
+  counter.castShadow = true;
+  counter.receiveShadow = true;
+  group.add(counter);
+
+  const roofGroup = new THREE.Group();
+  const roof = new THREE.Mesh(
+    new THREE.BoxGeometry(w + 0.2, 0.12, d + 0.2),
+    new THREE.MeshStandardMaterial({ color: 0x1e40af, roughness: 0.7 })
+  );
+  roof.position.set(cx, 2.82, cz);
+  roof.castShadow = true;
+  roofGroup.add(roof);
+  group.add(roofGroup);
+
+  const bankerRig = buildHumanRig(BANK_SHOP.bankerShirtHex, '#1C1917', false, true);
+  bankerRig.root.position.set(BANK_SHOP.bankerPos.x, 0.135, BANK_SHOP.bankerPos.z);
+  bankerRig.root.rotation.y = 0;
+  scene.add(bankerRig.root);
+
+  scene.add(group);
+  return { bounds: BANK_SHOP.bounds, roofGroup, bankerRig };
+}
+
 interface WoodMasterVisuals {
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
   roofGroup: THREE.Group;
@@ -4743,6 +4856,7 @@ export class Chai3DSceneController {
   private rentableBuildingVisuals: RentableBuildingVisuals[];
   private buyerShopVisuals: BuyerShopVisuals;
   private woodMasterVisuals: WoodMasterVisuals;
+  private bankVisuals: BankVisuals;
   private carVisuals: CarVisuals;
   private milkmanVisuals: MilkmanVisuals;
   private targetRing: THREE.Mesh;
@@ -4850,6 +4964,7 @@ export class Chai3DSceneController {
       woodTex,
       maxAniso
     );
+    this.bankVisuals = buildBankShopGroup(this.scene, maxAniso);
     this.scene.add(buildWaterTapGroup());
     this.scene.add(buildTrashBinGroup());
 
@@ -5449,13 +5564,16 @@ export class Chai3DSceneController {
           : rb.id === 'center_shop'
             ? 'center_owner'
             : 'east_owner';
+      const rentRec = world.rentedShops.find((r) => r.buildingId === rb.id);
+      const ownerAway = !!rentRec && world.day < rentRec.nextRentDueDay;
       this.syncNamedVisitorRig(
         rb.ownerRig,
-        visitorById.get(visId),
+        ownerAway ? undefined : visitorById.get(visId),
         rb.bounds.minX,
         elapsedSec,
         dt
       );
+      rb.ownerRig.root.visible = !ownerAway;
       if (p1Inside) {
         p1InAnyShop = true;
         if (builtKitchenIds.has(rb.id)) activeInsideShopId = rb.id;
@@ -5484,6 +5602,12 @@ export class Chai3DSceneController {
     const p1InsideWood = isInsideBox(p, this.woodMasterVisuals.bounds);
     const p2InsideWood = p2 ? isInsideBox(p2, this.woodMasterVisuals.bounds) : false;
     this.woodMasterVisuals.roofGroup.visible = !(p1InsideWood || p2InsideWood);
+
+    const p1InsideBank = isInsideBox(p, this.bankVisuals.bounds);
+    const p2InsideBank = p2 ? isInsideBox(p2, this.bankVisuals.bounds) : false;
+    this.bankVisuals.roofGroup.visible = !(p1InsideBank || p2InsideBank);
+    if (p1InsideBank) p1InAnyShop = true;
+    if (p2InsideBank) p2InAnyShop = true;
     this.syncNamedVisitorRig(
       this.woodMasterVisuals.masterRig,
       visitorById.get('wood_master'),
@@ -6272,6 +6396,10 @@ export class Chai3DSceneController {
         actor,
         this.woodMasterVisuals.bounds
       );
+      this.bankVisuals.roofGroup.visible = !isInsideBox(
+        actor,
+        this.bankVisuals.bounds
+      );
       this.cycleVisuals.awningGroup.visible =
         world.hasTeaStall !== false ? !isNearTeaCart(actor) : true;
       this.snacksCartVisuals.awningGroup.visible = world.hasSnacksCart
@@ -6769,31 +6897,36 @@ export class Chai3DSceneController {
           1.58,
           h.z
         );
-      }
-    }
-
     // Building Owner Labels (for all 3 Rentable Street Shops)
     for (const b of RENTABLE_BUILDINGS) {
       const rec = world.rentedShops.find((r) => r.buildingId === b.id);
       const isDue = Boolean(rec && world.day >= rec.nextRentDueDay);
+      const ownerAway = Boolean(rec && world.day < rec.nextRentDueDay);
       pushLabel(
         {
           id: `building_owner_${b.id}`,
           kind: 'building_owner',
           text: !rec
-            ? `${b.ownerName} · ${b.shopName}`
-            : isDue
-              ? `${b.ownerName} · RENT DUE!`
-              : `${b.shopName} (Yours)`,
+            ? `${b.ownerName} ? ${b.shopName}`
+            : ownerAway
+              ? `${b.shopName} (Rented)`
+              : isDue
+                ? `${b.ownerName} ? RENT DUE!`
+                : `${b.ownerName} ? ${b.shopName}`,
           subText: !rec
             ? `${formatMoney(b.weeklyRentCents)}/wk [E]`
-            : isDue
-              ? `${formatMoney(b.weeklyRentCents)} [E]`
-              : `Paid Day ${rec.nextRentDueDay}`,
+            : ownerAway
+              ? `Owner returns Day ${rec.nextRentDueDay}`
+              : isDue
+                ? `${formatMoney(b.weeklyRentCents)} due now [E]`
+                : `Paid until Day ${rec.nextRentDueDay}`,
           urgent: isDue,
         },
         b.ownerPos.x,
         2.05,
+        b.ownerPos.z
+      );
+    }
         b.ownerPos.z
       );
     }
@@ -6831,6 +6964,23 @@ export class Chai3DSceneController {
       WOOD_MASTER_SHOP.masterPos.x,
       2.05,
       WOOD_MASTER_SHOP.masterPos.z
+    );
+
+    // City Micro Bank NPC Label
+    const activeLoan = world.activeLoan?.status === 'active' ? world.activeLoan : null;
+    pushLabel(
+      {
+        id: 'bank',
+        kind: 'bank',
+        text: `${BANK_SHOP.bankerName} · Bank`,
+        subText: activeLoan
+          ? `Loan ${formatMoney(activeLoan.remainingDueCents)} (${activeLoan.daysRemaining}d)`
+          : 'Loan Available [E]',
+        urgent: Boolean(activeLoan && activeLoan.daysRemaining <= 1),
+      },
+      BANK_SHOP.bankerPos.x,
+      2.0,
+      BANK_SHOP.bankerPos.z
     );
 
     // Co-Op Partner Overhead Markers when 2-Player Co-Op is Active

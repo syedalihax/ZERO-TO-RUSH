@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useCallback, useState } from 'react';
 import {
@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Coins,
+  LogOut,
   TrendingUp,
   X,
 } from 'lucide-react';
@@ -23,6 +24,7 @@ interface BuildingRentModalProps {
   world: WorldSave;
   buildingId: ShopBuildingId;
   onRentOrPay: (buildingId: ShopBuildingId) => void;
+  onVacate: (buildingId: ShopBuildingId) => void;
   onClose: () => void;
 }
 
@@ -30,37 +32,52 @@ export default function BuildingRentModal({
   world,
   buildingId,
   onRentOrPay,
+  onVacate,
   onClose,
 }: BuildingRentModalProps) {
   const building =
     RENTABLE_BUILDINGS.find((b) => b.id === buildingId) ??
     RENTABLE_BUILDINGS[0];
   const record = world.rentedShops.find((r) => r.buildingId === building.id);
-  const isOverdue = Boolean(record && world.day >= record.nextRentDueDay);
+  const isDue = Boolean(record && world.day >= record.nextRentDueDay);
+  const isGrace = Boolean(record && world.day > record.nextRentDueDay);
   const canAfford = world.cashCents >= building.weeklyRentCents;
   const daysRemaining = record
     ? Math.max(0, record.nextRentDueDay - world.day)
     : 0;
 
   const [selectedIdx, setSelectedIdx] = useState(0);
+  const maxIdx = record ? 2 : 1;
 
-  const toggleIdx = useCallback(() => {
-    setSelectedIdx((prev) => (prev === 0 ? 1 : 0));
-  }, []);
+  const moveIdx = useCallback(
+    (delta: number) => {
+      setSelectedIdx((prev) => {
+        const next = prev + delta;
+        if (next < 0) return maxIdx;
+        if (next > maxIdx) return 0;
+        return next;
+      });
+    },
+    [maxIdx]
+  );
 
   const handleSelect = useCallback(() => {
     if (selectedIdx === 0) {
       if (canAfford) onRentOrPay(building.id);
-    } else {
-      onClose();
+      return;
     }
-  }, [selectedIdx, canAfford, onRentOrPay, building.id, onClose]);
+    if (record && selectedIdx === 1) {
+      onVacate(building.id);
+      return;
+    }
+    onClose();
+  }, [selectedIdx, canAfford, onRentOrPay, building.id, onClose, onVacate, record]);
 
   useMenuKeyboard({
-    onUp: toggleIdx,
-    onDown: toggleIdx,
-    onLeft: toggleIdx,
-    onRight: toggleIdx,
+    onUp: () => moveIdx(-1),
+    onDown: () => moveIdx(1),
+    onLeft: () => moveIdx(-1),
+    onRight: () => moveIdx(1),
     onSelect: handleSelect,
     onClose,
   });
@@ -103,38 +120,44 @@ export default function BuildingRentModal({
         </div>
 
         <div className="p-6 space-y-4">
-          {/* Status Banner */}
           {!record ? (
             <div className="p-3.5 rounded-lg bg-[#221915] border border-[#D4A373]/20 text-xs text-[#EAE0D0] leading-relaxed">
               &ldquo;Assalam-o-Alaikum! You can rent this shop weekly for{' '}
               <span className="font-mono font-bold text-[#FBBF24]">
                 {formatMoney(building.weeklyRentCents)} / week
               </span>{' '}
-              ({SHOP_WEEK_DAYS} days). Come back and meet me inside whenever
-              weekly rent is due!&rdquo;
+              ({SHOP_WEEK_DAYS} days). When rent is due, I will come back to collect it.&rdquo;
             </div>
-          ) : isOverdue ? (
+          ) : isGrace ? (
             <div className="p-3.5 rounded-lg bg-[#7F1D1D]/45 border border-[#EF4444]/60 flex items-start gap-2.5 text-xs text-[#FECACA]">
               <AlertTriangle className="w-4 h-4 text-[#FCA5A5] shrink-0 mt-0.5" />
               <div>
-                <span className="font-bold">Weekly Rent Due Today!</span> Pay{' '}
-                {building.ownerName} {formatMoney(building.weeklyRentCents)} to
-                keep earning your daily shop profit bonus.
+                <span className="font-bold">Final day!</span> Pay{' '}
+                {formatMoney(building.weeklyRentCents)} today or vacate the shop.
+                If you do nothing, {building.ownerName} will sell your shop items to the
+                second-hand buyer at -50% and clear the shop.
+              </div>
+            </div>
+          ) : isDue ? (
+            <div className="p-3.5 rounded-lg bg-[#78350F]/35 border border-[#F59E0B]/50 flex items-start gap-2.5 text-xs text-[#FDE68A]">
+              <AlertTriangle className="w-4 h-4 text-[#FBBF24] shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold">Rent due.</span> Pay today, or vacate the shop.
+                You have 1 day before items are sold at -50%.
               </div>
             </div>
           ) : (
             <div className="p-3.5 rounded-lg bg-[#14532D]/40 border border-[#4ADE80]/40 flex items-start gap-2.5 text-xs text-[#DCFCE7]">
               <CheckCircle2 className="w-4 h-4 text-[#86EFAC] shrink-0 mt-0.5" />
               <div>
-                <span className="font-bold">Lease Active!</span> Next weekly
-                rent due on <span className="font-mono font-bold">Day {record.nextRentDueDay}</span>{' '}
-                ({daysRemaining} day{daysRemaining === 1 ? '' : 's'} left ·{' '}
-                {record.weeksPaid} week{record.weeksPaid === 1 ? '' : 's'} paid).
+                <span className="font-bold">Lease active.</span> Next rent due on{' '}
+                <span className="font-mono font-bold">Day {record.nextRentDueDay}</span>{' '}
+                ({daysRemaining} day{daysRemaining === 1 ? '' : 's'} left). Owner will
+                return on due day.
               </div>
             </div>
           )}
 
-          {/* Lease Terms & Perks */}
           <div className="grid grid-cols-2 gap-3 tabular-nums">
             <div className="p-3.5 rounded-lg bg-[#221915] border border-[#D4A373]/15">
               <div className="flex items-center gap-1.5 text-xs text-[#D6C7B5]">
@@ -143,10 +166,7 @@ export default function BuildingRentModal({
               </div>
               <div className="font-mono font-bold text-lg text-[#FBBF24] mt-1">
                 {formatMoney(building.weeklyRentCents)}
-                <span className="text-xs font-normal text-[#D6C7B5]">
-                  {' '}
-                  / {SHOP_WEEK_DAYS} days
-                </span>
+                <span className="text-xs font-normal text-[#D6C7B5]"> / {SHOP_WEEK_DAYS} days</span>
               </div>
             </div>
 
@@ -157,72 +177,56 @@ export default function BuildingRentModal({
               </div>
               <div className="font-mono font-bold text-lg text-[#86EFAC] mt-1">
                 +{formatMoney(building.dailyIncomeBonusCents)}
-                <span className="text-xs font-normal text-[#D6C7B5]">
-                  {' '}
-                  / day
-                </span>
+                <span className="text-xs font-normal text-[#D6C7B5]"> / day</span>
               </div>
             </div>
           </div>
 
-          <div className="text-xs text-[#D6C7B5] bg-[#1B1410] border border-[#D4A373]/15 rounded-lg p-3 leading-relaxed">
-            Spacious 3x larger{' '}
-            <span className="font-semibold text-[#FFFDF9]">empty shop floor</span>{' '}
-            with space for a Shop Kitchen, 4 Chairs &amp; 2 Tables (+12% street
-            customer traffic &amp; daily profit bonus!). Order your{' '}
-            <span className="font-semibold text-[#FDE68A]">
-              Shop Kitchen, Chairs &amp; Tables
-            </span>{' '}
-            from <span className="font-semibold text-[#FDE68A]">Wood Master Workshop (Ustad Karim)</span>.
-          </div>
-
-          {/* Actions */}
           <div className="space-y-2 pt-1">
             <button
               type="button"
               disabled={!canAfford}
               onMouseEnter={() => setSelectedIdx(0)}
-              onClick={() => onRentOrPay(building.id)}
+              onClick={() => canAfford && onRentOrPay(building.id)}
               className={`w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg font-display font-bold text-sm transition-all ${
                 canAfford
-                  ? isOverdue
+                  ? isDue
                     ? 'bg-[#D97706] hover:bg-[#B45309] text-white cursor-pointer'
                     : 'bg-[#15803D] hover:bg-[#166534] text-white cursor-pointer'
                   : 'bg-[#1B1410] text-[#78716C] cursor-not-allowed'
-              } ${
-                selectedIdx === 0
-                  ? 'ring-2 ring-[#FDE68A] ring-offset-2 ring-offset-[#2A201B]'
-                  : ''
-              }`}
+              } ${selectedIdx === 0 ? 'ring-2 ring-[#FDE68A] ring-offset-2 ring-offset-[#2A201B]' : ''}`}
             >
               <span className="flex items-center gap-2">
-                <ChevronRight
-                  className={`w-4 h-4 ${
-                    selectedIdx === 0 ? 'opacity-100' : 'opacity-0'
-                  }`}
-                />
+                <ChevronRight className={`w-4 h-4 ${selectedIdx === 0 ? 'opacity-100' : 'opacity-0'}`} />
                 <Coins className="w-4 h-4" />
-                <span>
-                  {!record
-                    ? `Rent ${building.shopName} (1 Week)`
-                    : isOverdue
-                      ? `Pay Weekly Rent to ${building.ownerName}`
-                      : 'Pay Another Week in Advance'}
-                </span>
+                <span>{!record ? `Rent ${building.shopName} (1 Week)` : isDue ? `Pay Rent to ${building.ownerName}` : 'Pay Another Week in Advance'}</span>
               </span>
-              <span className="font-mono">
-                {formatMoney(building.weeklyRentCents)}
-              </span>
+              <span className="font-mono">{formatMoney(building.weeklyRentCents)}</span>
             </button>
+
+            {record && (
+              <button
+                type="button"
+                onMouseEnter={() => setSelectedIdx(1)}
+                onClick={() => onVacate(building.id)}
+                className={`w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg font-display font-bold text-sm bg-[#3A1D1D] hover:bg-[#4B2323] text-[#FECACA] cursor-pointer transition-all ${
+                  selectedIdx === 1 ? 'ring-2 ring-[#FCA5A5] ring-offset-2 ring-offset-[#2A201B]' : ''
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <ChevronRight className={`w-4 h-4 ${selectedIdx === 1 ? 'opacity-100' : 'opacity-0'}`} />
+                  <LogOut className="w-4 h-4" />
+                  <span>Vacate Shop (items sold at -50%)</span>
+                </span>
+              </button>
+            )}
 
             <button
               type="button"
-              onMouseEnter={() => setSelectedIdx(1)}
+              onMouseEnter={() => setSelectedIdx(maxIdx)}
               onClick={onClose}
               className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-[#3A2D26] hover:bg-[#4B3B32] text-xs font-semibold cursor-pointer transition-all ${
-                selectedIdx === 1
-                  ? 'ring-2 ring-[#FDE68A] ring-offset-2 ring-offset-[#2A201B]'
-                  : ''
+                selectedIdx === maxIdx ? 'ring-2 ring-[#FDE68A] ring-offset-2 ring-offset-[#2A201B]' : ''
               }`}
             >
               <span>Leave Counter</span>
@@ -232,9 +236,7 @@ export default function BuildingRentModal({
 
         <div className="px-6 py-2.5 bg-[#1B1410] border-t border-[#D4A373]/15 text-[11px] font-mono text-[#D6C7B5] flex flex-wrap items-center justify-between gap-2">
           <span>W / S Switch</span>
-          <span className="text-[#86EFAC] font-semibold">
-            Space / Enter Confirm · E / Esc Close
-          </span>
+          <span className="text-[#86EFAC] font-semibold">Space / Enter Confirm · E / Esc Close</span>
         </div>
       </div>
     </div>

@@ -6,6 +6,8 @@ import {
   BEGGAR_KID_WAIT_SECONDS,
   BEGGAR_MARKETING_SPOTS,
   BEGGAR_SNACK_SLOTS,
+  BANK_LOAN_OPTIONS,
+  BANK_SHOP,
   BUYER_SHOP,
   CAR_PARK_POS,
   CHILLING_DURATION,
@@ -62,6 +64,10 @@ import {
   WATER_TAP_REFILL_AMOUNT,
   WOOD_MASTER_SHOP,
   WORLD_BOUNDS,
+  CHAIR_PRICE_CENTS,
+  TABLE_PRICE_CENTS,
+  SHOP_KITCHEN_PRICE_CENTS,
+  RESALE_RATE,
   drinkToHotItem,
   formatMoney,
   getHelperWageCents,
@@ -368,10 +374,55 @@ export function createNewWorldSave(id: string, name: string): WorldSave {
   };
 }
 
+export interface ShiftCarryOver {
+  playerHolding?: HeldItem;
+  player2Holding?: HeldItem;
+  player2Active?: boolean;
+  trayItems?: HeldItem[];
+  snackTrayItems?: HeldItem[];
+  coldTrayItems?: HeldItem[];
+  kettle?: ShiftSnapshot['kettle'];
+  fryer?: ShiftSnapshot['fryer'];
+  chiller?: ShiftSnapshot['chiller'];
+}
+
+function normalizeCarryOverSlots(
+  items: HeldItem[] | undefined,
+  count: number
+): HeldItem[] {
+  return Array.from({ length: count }, (_, idx) => items?.[idx] ?? null);
+}
+
 export function createInitialShift(
   world: WorldSave,
-  carryInventory?: InventoryState
+  carryInventory?: InventoryState,
+  carryOver?: ShiftCarryOver
 ): ShiftSnapshot {
+  const trayItems = normalizeCarryOverSlots(carryOver?.trayItems, 4);
+  const snackTrayItems = normalizeCarryOverSlots(carryOver?.snackTrayItems, 2);
+  const coldTrayItems = normalizeCarryOverSlots(carryOver?.coldTrayItems, 2);
+  const kettle = carryOver?.kettle
+    ? {
+        status: carryOver.kettle.status,
+        progress: carryOver.kettle.progress,
+        brewingDrink: carryOver.kettle.brewingDrink ?? null,
+      }
+    : { status: 'idle' as const, progress: 0, brewingDrink: null };
+  const fryer = carryOver?.fryer
+    ? {
+        status: carryOver.fryer.status,
+        progress: carryOver.fryer.progress,
+        fryingSnack: carryOver.fryer.fryingSnack ?? null,
+      }
+    : { status: 'idle' as const, progress: 0, fryingSnack: null };
+  const chiller = carryOver?.chiller
+    ? {
+        status: carryOver.chiller.status,
+        progress: carryOver.chiller.progress,
+        chillingItem: carryOver.chiller.chillingItem ?? null,
+      }
+    : { status: 'idle' as const, progress: 0, chillingItem: null };
+
   return {
     stage: world.stage,
     day: world.day,
@@ -384,7 +435,7 @@ export function createInitialShift(
       x: -2.0,
       z: -2.45,
       yaw: 0,
-      holding: null,
+      holding: carryOver?.playerHolding ?? null,
       walkCycle: 0,
       dashCooldown: 0,
       dashTimer: 0,
@@ -395,18 +446,18 @@ export function createInitialShift(
       x: -0.75,
       z: -2.45,
       yaw: 0,
-      holding: null,
+      holding: carryOver?.player2Holding ?? null,
       walkCycle: 0,
       dashCooldown: 0,
       dashTimer: 0,
       isMoving: false,
       sittingChairId: null,
-      active: false,
+      active: carryOver?.player2Active ?? false,
     },
-    trayItem: null,
-    trayItems: [null, null, null, null],
-    snackTrayItems: [null, null],
-    coldTrayItems: [null, null],
+    trayItem: trayItems[0] ?? null,
+    trayItems,
+    snackTrayItems,
+    coldTrayItems,
     inventory: carryInventory
       ? {
           cups: carryInventory.cups,
@@ -442,21 +493,9 @@ export function createInitialShift(
           iceCreamMix: 0,
           iceCreamCones: 0,
         },
-    kettle: {
-      status: 'idle',
-      progress: 0,
-      brewingDrink: null,
-    },
-    fryer: {
-      status: 'idle',
-      progress: 0,
-      fryingSnack: null,
-    },
-    chiller: {
-      status: 'idle',
-      progress: 0,
-      chillingItem: null,
-    },
+    kettle,
+    fryer,
+    chiller,
     helper: createDefaultHelper('chotu'),
     helpers: HELPER_NPC_IDS.map((id) => createDefaultHelper(id)),
     milkman: {
@@ -540,6 +579,7 @@ export function canPlaceFurnitureAt(
     !isInsideBuildingFootprint(SUPERMARKET_BOUNDS, 0.25) &&
     !isInsideBuildingFootprint(BUYER_SHOP.bounds, 0.25) &&
     !isInsideBuildingFootprint(WOOD_MASTER_SHOP.bounds, 0.25) &&
+    !isInsideBuildingFootprint(BANK_SHOP.bounds, 0.25) &&
     !RENTABLE_BUILDINGS.some((b) => isInsideBuildingFootprint(b.bounds, 0.25));
 
   let insideRentedShop = false;
@@ -890,11 +930,10 @@ function maybeUnlockLevel2(
 
 function spawnCustomerWave(shift: ShiftSnapshot, world: WorldSave): void {
   const helpedKids = shift.beggarKidsHelped ?? 0;
-  const maxCust =
-    (world.hasSnacksCart ? 7 : 6) +
-    (world.hasColdCart ? 2 : 0) +
-    Math.min(3, helpedKids);
-  if (shift.customers.length >= maxCust) return;
+  const activeNormalCustomers = shift.customers.filter(
+    (c) => c.status !== 'walking_out'
+  ).length;
+  if (activeNormalCustomers >= 4) return;
 
   const isSnackOrder = (d: DrinkType) => d === 'samosa' || d === 'pakora';
   const isColdOrder = (d: DrinkType) => d === 'cold_drink' || d === 'ice_cream';
@@ -955,6 +994,12 @@ function spawnCustomerWave(shift: ShiftSnapshot, world: WorldSave): void {
       : 1;
 
   for (let i = 0; i < maxSpawn; i++) {
+    const standingReadhiCount = shift.customers.filter(
+      (c) =>
+        c.status !== 'walking_out' &&
+        !c.targetChairId &&
+        !c.seatedChairId
+    ).length;
     let orderDrink = pickCustomerOrder(world, shift);
     let isFried = isSnackOrder(orderDrink);
     let isCold = isColdOrder(orderDrink);
@@ -962,6 +1007,7 @@ function spawnCustomerWave(shift: ShiftSnapshot, world: WorldSave): void {
 
     let slotIndex = 0;
     if (!openChair) {
+      if (standingReadhiCount >= 5) break;
       if (isFried) {
         const nextSnackSlot = freeSnackSlots.shift();
         if (nextSnackSlot !== undefined) {
@@ -1786,12 +1832,21 @@ export function findInteractTargetForPlayer(
   {
     let bestHelper: HelperKidState | null = null;
     let bestHelperDist = 1.95;
+    const heldDrinkForHelperTalk = heldHotDrinkType(p.holding);
     for (const h of getShiftHelpers(shift)) {
       if (h.status !== 'sitting') continue;
       if (
         h.beggingState &&
         h.beggingState !== 'at_mat' &&
-        h.beggingState !== 'marketing'
+        h.beggingState !== 'marketing' &&
+        h.beggingState !== 'begging_at_stall'
+      ) {
+        continue;
+      }
+      if (
+        h.beggingState === 'begging_at_stall' &&
+        heldDrinkForHelperTalk !== null &&
+        heldDrinkForHelperTalk === (h.beggingDrink ?? 'tea')
       ) {
         continue;
       }
@@ -1868,23 +1923,27 @@ export function findInteractTargetForPlayer(
 
   // 7. Open Rentable Buildings -> Meet Building Owner Inside!
   for (const b of RENTABLE_BUILDINGS) {
+    const rec = world.rentedShops.find((r) => r.buildingId === b.id);
+    const isDue = !!rec && world.day >= rec.nextRentDueDay;
+    const isGrace = !!rec && world.day > rec.nextRentDueDay;
+    // Owner leaves the shop while rented and rent is not due; returns on due day.
+    if (rec && !isDue) continue;
+
     const dOwner = Math.hypot(
       b.counterPos.x - p.x,
       b.counterPos.z + 0.7 - p.z
     );
     if (dOwner < 2.2) {
-      const rec = world.rentedShops.find((r) => r.buildingId === b.id);
-      const isDue = rec && world.day >= rec.nextRentDueDay;
       return {
         kind: 'building_owner',
         x: b.ownerPos.x,
         z: b.ownerPos.z,
         buildingId: b.id,
         prompt: !rec
-          ? `[E] Meet ${b.ownerName} · Rent ${b.shopName} (${formatMoney(b.weeklyRentCents)}/wk)`
-          : isDue
-            ? `[E] Pay ${b.ownerName} Weekly Rent (${formatMoney(b.weeklyRentCents)})!`
-            : `[E] Meet ${b.ownerName} · ${b.shopName} (Paid until Day ${rec.nextRentDueDay})`,
+          ? `[E] Meet ${b.ownerName} ? Rent ${b.shopName} (${formatMoney(b.weeklyRentCents)}/wk)`
+          : isGrace
+            ? `[E] ${b.ownerName} is waiting! Pay ${formatMoney(b.weeklyRentCents)} or vacate today`
+            : `[E] Pay ${b.ownerName} Weekly Rent (${formatMoney(b.weeklyRentCents)})`,
       };
     }
   }
@@ -1933,6 +1992,27 @@ export function findInteractTargetForPlayer(
             : buildingCount > 0
               ? `[E] Wood Master Workshop (${buildingCount} crafting...)`
               : `[E] Meet ${WOOD_MASTER_SHOP.masterName} · Order Chairs, Tables, Shop Kitchen & Readi`,
+      };
+    }
+  }
+
+  // 7d. City Micro Bank (Loan / Repay / Collateral)
+  {
+    const dBank = Math.hypot(
+      BANK_SHOP.counterPos.x - p.x,
+      BANK_SHOP.counterPos.z + 0.7 - p.z
+    );
+    if (dBank < 2.25) {
+      const loan = world.activeLoan;
+      const prompt =
+        loan && loan.status === 'active'
+          ? `[E] ${BANK_SHOP.shopName} · Repay Loan (${formatMoney(loan.remainingDueCents)} left)`
+          : `[E] ${BANK_SHOP.shopName} · Talk to ${BANK_SHOP.bankerName} for Loan`;
+      return {
+        kind: 'bank',
+        x: BANK_SHOP.bankerPos.x,
+        z: BANK_SHOP.bankerPos.z,
+        prompt,
       };
     }
   }
@@ -2584,6 +2664,38 @@ function resolveAllBuildingCollisions(
     );
   }
 
+  // City Micro Bank (walls + doorway + banker counter)
+  {
+    const { minX, maxX, minZ, maxZ } = BANK_SHOP.bounds;
+    resolveCollisionBox(p, minX, maxX, minZ - 0.16, minZ + 0.16, radius);
+    resolveCollisionBox(p, minX - 0.16, minX + 0.16, minZ, maxZ, radius);
+    resolveCollisionBox(p, maxX - 0.16, maxX + 0.16, minZ, maxZ, radius);
+    resolveCollisionBox(
+      p,
+      minX,
+      BANK_SHOP.doorMinX,
+      maxZ - 0.16,
+      maxZ + 0.14,
+      radius
+    );
+    resolveCollisionBox(
+      p,
+      BANK_SHOP.doorMaxX,
+      maxX,
+      maxZ - 0.16,
+      maxZ + 0.14,
+      radius
+    );
+    resolveCollisionBox(
+      p,
+      BANK_SHOP.counterPos.x - 0.95,
+      BANK_SHOP.counterPos.x + 0.95,
+      BANK_SHOP.counterPos.z - 0.3,
+      BANK_SHOP.counterPos.z + 0.3,
+      radius
+    );
+  }
+
   // Open Walk-In Supermarket walls & counters (cleanly walkable around outer sides & backside!)
   resolveCollisionBox(p, 4.3, 4.55, -8.9, -6.5, radius);
   resolveCollisionBox(
@@ -2738,6 +2850,36 @@ function isStaticBlockedForNpc(
       ) {
         return true;
       }
+    }
+  }
+
+  // Bank walls
+  if (
+    x >= BANK_SHOP.bounds.minX - 0.2 &&
+    x <= BANK_SHOP.bounds.maxX + 0.2 &&
+    z >= BANK_SHOP.bounds.minZ - 0.2 &&
+    z <= BANK_SHOP.bounds.maxZ + 0.2
+  ) {
+    if (z < BANK_SHOP.bounds.minZ + 0.35) return true;
+    if (
+      x < BANK_SHOP.bounds.minX + 0.35 ||
+      x > BANK_SHOP.bounds.maxX - 0.35
+    ) {
+      return true;
+    }
+    if (
+      z > BANK_SHOP.bounds.maxZ - 0.35 &&
+      (x < BANK_SHOP.doorMinX + 0.2 || x > BANK_SHOP.doorMaxX - 0.2)
+    ) {
+      return true;
+    }
+    if (
+      x > BANK_SHOP.counterPos.x - 1.05 &&
+      x < BANK_SHOP.counterPos.x + 1.05 &&
+      z > BANK_SHOP.counterPos.z - 0.45 &&
+      z < BANK_SHOP.counterPos.z + 0.45
+    ) {
+      return true;
     }
   }
 
@@ -3694,7 +3836,7 @@ function canHelperMakeDrink(
   }
   if (drink === 'cold_drink') {
     return (
-      world.hasColdCart &&
+      world.hasColdCart === true &&
       world.unlockedRecipes.includes('cold_drink') &&
       (shift.inventory.coldDrinkBottles ?? 0) > 0 &&
       (shift.inventory.iceBlocks ?? 0) > 0
@@ -3702,7 +3844,7 @@ function canHelperMakeDrink(
   }
   if (drink === 'ice_cream') {
     return (
-      world.hasColdCart &&
+      world.hasColdCart === true &&
       world.unlockedRecipes.includes('ice_cream') &&
       (shift.inventory.iceCreamCones ?? 0) > 0 &&
       (shift.inventory.iceCreamMix ?? 0) > 0 &&
@@ -3819,16 +3961,9 @@ function stepHelperNpc(
   const canHelperTakeNewOrder = (dType: DrinkType): boolean => {
     if (!isDrinkAllowedForRole(dType)) return false;
     if (!canHelperMakeDrink(dType, shift, world)) return false;
-    if (dType === 'samosa' || dType === 'pakora') {
-      return shift.fryer.status === 'idle' && !otherUsingFryer;
-    }
-    if (dType === 'cold_drink' || dType === 'ice_cream') {
-      return (shift.chiller?.status ?? 'idle') === 'idle' && !otherUsingChiller;
-    }
-    if (dType === 'biscuit_pack' || dType === 'cupcake') {
-      return true;
-    }
-    return shift.kettle.status === 'idle' && !otherUsingKettle;
+    // Kettle/fryer/chiller are single stations, but helpers can queue:
+    // to_kettle/to_kadhai/to_chiller handlers wait until the station is free.
+    return true;
   };
 
   const pickBestWaitingTarget = (
@@ -4189,12 +4324,16 @@ function stepHelperNpc(
   }
 
   // If fryer is already ready with a snack matching any waiting customer/car, grab it!
+  const fryerClaimedByWaitingHelper = allHelpers.some(
+    (h) => h.status === 'hired' && h.task === 'waiting_fry'
+  );
   if (
     world.hasSnacksCart &&
     (isSnacksOnly || !munniHired) &&
     helper.holding === null &&
     shift.fryer.status === 'ready' &&
-    shift.fryer.fryingSnack
+    shift.fryer.fryingSnack &&
+    !fryerClaimedByWaitingHelper
   ) {
     const matchCust = pickBestWaitingTarget(shift.fryer.fryingSnack, false);
     if (matchCust) {
@@ -4214,12 +4353,16 @@ function stepHelperNpc(
   }
 
   // If chiller is already ready with a cold item matching any waiting customer/car, grab it!
+  const chillerClaimedByWaitingHelper = allHelpers.some(
+    (h) => h.status === 'hired' && h.task === 'waiting_chill'
+  );
   if (
     !isSnacksOnly &&
     world.hasColdCart &&
     helper.holding === null &&
     shift.chiller?.status === 'ready' &&
-    shift.chiller.chillingItem
+    shift.chiller.chillingItem &&
+    !chillerClaimedByWaitingHelper
   ) {
     const matchCust = pickBestWaitingTarget(shift.chiller.chillingItem, false);
     if (matchCust) {
@@ -4320,7 +4463,99 @@ function stepHelperNpc(
     }
 
     // 2. Otherwise pick the most urgent eligible order this helper can make/grab from stock
-    const nextOrder = pickBestWaitingTarget(null, true);
+    const stationConflicts = (drink: DrinkType): boolean => {
+      const needsFryer = drink === 'samosa' || drink === 'pakora';
+      const needsChiller = drink === 'cold_drink' || drink === 'ice_cream';
+      const needsKettle =
+        !needsFryer &&
+        !needsChiller &&
+        drink !== 'biscuit_pack' &&
+        drink !== 'cupcake';
+      return (
+        (needsKettle && otherUsingKettle) ||
+        (needsFryer && otherUsingFryer) ||
+        (needsChiller && otherUsingChiller)
+      );
+    };
+
+    let nextOrder = pickBestWaitingTarget(null, true);
+    if (nextOrder && stationConflicts(nextOrder.drink)) {
+      type AltOrder = {
+        id: string;
+        drink: DrinkType;
+        x: number;
+        z: number;
+        isOwner: boolean;
+        isCar: boolean;
+        isVisitor: boolean;
+        patienceRatio: number;
+      };
+      const altRef: { current: AltOrder | null } = { current: null };
+      const considerAlt = (
+        candidate: {
+          id: string;
+          drink: DrinkType;
+          x: number;
+          z: number;
+          isOwner: boolean;
+          isCar: boolean;
+          isVisitor: boolean;
+        } | null,
+        patienceRatio: number
+      ) => {
+        if (!candidate || stationConflicts(candidate.drink)) return;
+        if (!altRef.current || patienceRatio < altRef.current.patienceRatio) {
+          altRef.current = { ...candidate, patienceRatio };
+        }
+      };
+      for (const c of shift.customers) {
+        if (c.status !== 'waiting' || claimedCustomerIds.has(c.id)) continue;
+        if (!isDrinkAllowedForRole(c.orderDrink)) continue;
+        if (!canHelperTakeNewOrder(c.orderDrink)) continue;
+        considerAlt(
+          { id: c.id, drink: c.orderDrink, x: c.x, z: c.z, isOwner: false, isCar: false, isVisitor: false },
+          c.patience / Math.max(1, c.maxPatience)
+        );
+      }
+      const ownerAlt = shift.supermarketOwner;
+      if (!claimedCustomerIds.has('owner_customer') && ownerAlt.phase === 'ordering_chai' && isDrinkAllowedForRole(ownerAlt.orderDrink) && canHelperTakeNewOrder(ownerAlt.orderDrink)) {
+        considerAlt(
+          { id: 'owner_customer', drink: ownerAlt.orderDrink, x: ownerAlt.x, z: ownerAlt.z, isOwner: true, isCar: false, isVisitor: false },
+          ownerAlt.patience / Math.max(1, ownerAlt.maxPatience)
+        );
+      }
+      for (const v of getShiftShopVisitors(shift)) {
+        if (v.phase !== 'ordering' || claimedCustomerIds.has(v.id)) continue;
+        if (!isDrinkAllowedForRole(v.orderDrink) || !canHelperTakeNewOrder(v.orderDrink)) continue;
+        considerAlt(
+          { id: v.id, drink: v.orderDrink, x: v.x, z: v.z, isOwner: false, isCar: false, isVisitor: true },
+          v.patience / Math.max(1, v.maxPatience)
+        );
+      }
+      const carAlt = shift.carCustomer;
+      if (!claimedCustomerIds.has('car_customer') && carAlt.phase === 'waiting') {
+        const carDrink = carAlt.orderDrink || 'tea';
+        if (isDrinkAllowedForRole(carDrink) && canHelperTakeNewOrder(carDrink)) {
+          considerAlt(
+            { id: 'car_customer', drink: carDrink, x: carAlt.x, z: carAlt.z, isOwner: false, isCar: true, isVisitor: false },
+            carAlt.patience / Math.max(1, carAlt.maxPatience)
+          );
+        }
+      }
+      if (altRef.current) {
+        const best = altRef.current;
+        nextOrder = {
+          id: best.id,
+          drink: best.drink,
+          x: best.x,
+          z: best.z,
+          isOwner: best.isOwner,
+          isCar: best.isCar,
+          isVisitor: best.isVisitor,
+        };
+      }
+    }
+
     if (nextOrder) {
       helper.targetDrink = nextOrder.drink;
       helper.targetCustomerId = nextOrder.id;
@@ -4419,9 +4654,10 @@ function stepHelperNpc(
           (missingDrink === 'tea' ||
             missingDrink === 'doodh_patti' ||
             missingDrink === 'coffee') &&
-          (shift.kettle.status !== 'idle' || otherUsingKettle)
+          shift.kettle.status !== 'idle' &&
+          otherUsingKettle
         ) {
-          helper.statusNote = 'Kettle Busy';
+          helper.statusNote = 'Kettle Busy (Queueing)';
         } else {
           helper.statusNote = 'Ready to Help';
         }
@@ -4902,6 +5138,7 @@ function stepUnhiredHelperBegging(
       helper.beggingTargetZ = targetSpot.z;
       helper.patience = BEGGAR_KID_WAIT_SECONDS;
       helper.maxPatience = BEGGAR_KID_WAIT_SECONDS;
+      helper.beggingWalkTimer = 15;
       helper.statusNote = `Hungry! Asking for free ${(DRINK_CATALOG[picked] ?? DRINK_CATALOG.tea).name}`;
       events.feedbackText = `${cfg.name} (${cfg.locationLabel}) is hungry & walking to Readi for free ${(DRINK_CATALOG[picked] ?? DRINK_CATALOG.tea).name}!`;
       events.feedbackColor = '#FDE68A';
@@ -4912,15 +5149,18 @@ function stepUnhiredHelperBegging(
   if (state === 'walking_to_stall') {
     const tx = helper.beggingTargetX ?? BEGGAR_KID_SLOTS[0].x;
     const tz = helper.beggingTargetZ ?? BEGGAR_KID_SLOTS[0].z;
+    helper.beggingWalkTimer = Math.max(0, (helper.beggingWalkTimer ?? 15) - dt);
     const arrived = moveNpcWithAvoidance(helper, tx, tz, 2.05, dt, world, shift, {
       biasSign: hBias,
       selfId: `helper_${hId}`,
       stayOnSidewalk: true,
     });
-    if (arrived) {
+    const timedOut = (helper.beggingWalkTimer ?? 0) <= 0;
+    if (arrived || timedOut) {
       helper.x = tx;
       helper.z = tz;
       helper.beggingState = 'begging_at_stall';
+      helper.beggingWalkTimer = undefined;
       const look = getStallLookTargetForDrink(helper.beggingDrink ?? 'tea', world);
       helper.yaw = Math.atan2(look.x - helper.x, look.z - helper.z);
     }
@@ -4939,6 +5179,7 @@ function stepUnhiredHelperBegging(
       helper.beggingState = 'returning_marketing';
       helper.marketingTimer = 0;
       helper.beggingDrink = null;
+      helper.beggingWalkTimer = 15;
       helper.statusNote = 'Returning to Corner';
       events.feedbackText = `${cfg.name} returned politely to their corner`;
       events.feedbackColor = '#D6C7B5';
@@ -4953,12 +5194,14 @@ function stepUnhiredHelperBegging(
       helper.marketingTimer = MARKETING_DURATION;
       helper.marketingCallTimer = 6;
       helper.beggingDrink = null;
+      helper.beggingWalkTimer = 15;
       helper.statusNote = 'Going to Market Stall!';
     }
     return;
   }
 
   if (state === 'returning_marketing') {
+    helper.beggingWalkTimer = Math.max(0, (helper.beggingWalkTimer ?? 15) - dt);
     const arrived = moveNpcWithAvoidance(
       helper,
       cfg.sitPos.x,
@@ -4973,10 +5216,12 @@ function stepUnhiredHelperBegging(
         stayOnSidewalk: true,
       }
     );
-    if (arrived) {
+    const timedOut = (helper.beggingWalkTimer ?? 0) <= 0;
+    if (arrived || timedOut) {
       helper.x = cfg.sitPos.x;
       helper.z = cfg.sitPos.z;
       helper.yaw = 0;
+      helper.beggingWalkTimer = undefined;
       if ((helper.marketingTimer ?? 0) > 0) {
         helper.beggingState = 'marketing';
         helper.statusNote = 'Promoting Your Readi! (+Sales)';
@@ -5023,6 +5268,7 @@ export function stepStage1Simulation(
     openHelperId: null,
     openGearBuyer: false,
     openWoodMaster: false,
+    openBank: false,
     openBuildingOwnerId: null,
     openCustomerAction: null,
     feedbackText: null,
@@ -5040,6 +5286,46 @@ export function stepStage1Simulation(
     shift.phase = 'day_complete';
     events.sounds.push('day_end');
 
+    // Evict overdue rented shops after 1 grace day. Owner sells furniture at -50% to second-hand buyer.
+    const evictedShopIds: string[] = [];
+    let evictionPayoutTotal = 0;
+    for (const rec of [...world.rentedShops]) {
+      if (world.day <= rec.nextRentDueDay) continue;
+      const cfg = RENTABLE_BUILDINGS.find((b) => b.id === rec.buildingId);
+      if (!cfg) continue;
+      const b = cfg.bounds;
+      const inside = (x: number, z: number) =>
+        x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ;
+
+      const chairsInside = world.placedChairs.filter((c) => inside(c.x, c.z));
+      const tablesInside = world.placedTables.filter((t) => inside(t.x, t.z));
+      const chairRefund = chairsInside.length * Math.floor(CHAIR_PRICE_CENTS * RESALE_RATE);
+      const tableRefund = tablesInside.length * Math.floor(TABLE_PRICE_CENTS * RESALE_RATE);
+      const kitchenRefund = world.shopKitchens.includes(rec.buildingId)
+        ? Math.floor(SHOP_KITCHEN_PRICE_CENTS * RESALE_RATE)
+        : 0;
+      const payout = chairRefund + tableRefund + kitchenRefund;
+
+      world.placedChairs = world.placedChairs.filter((c) => !inside(c.x, c.z));
+      world.placedTables = world.placedTables.filter((t) => !inside(t.x, t.z));
+      world.shopKitchens = world.shopKitchens.filter((id) => id !== rec.buildingId);
+      world.rentedShops = world.rentedShops.filter((r) => r.buildingId !== rec.buildingId);
+
+      if (payout > 0) {
+        world.cashCents += payout;
+        evictionPayoutTotal += payout;
+      }
+      evictedShopIds.push(cfg.shopName);
+      events.sounds.push('money');
+    }
+    if (evictedShopIds.length > 0) {
+      events.feedbackText =
+        evictionPayoutTotal > 0
+          ? `${evictedShopIds.join(', ')} vacated: items sold at -50% for ${formatMoney(evictionPayoutTotal)}.`
+          : `${evictedShopIds.join(', ')} vacated by owner.`;
+      events.feedbackColor = '#FCA5A5';
+    }
+
     let shopBonusTotal = 0;
     for (const rec of world.rentedShops) {
       if (world.day < rec.nextRentDueDay) {
@@ -5050,8 +5336,42 @@ export function stepStage1Simulation(
     if (shopBonusTotal > 0) {
       shift.earningsCents += shopBonusTotal;
       world.cashCents += shopBonusTotal;
-      events.feedbackText = `Rented Shops Daily Profit: +${formatMoney(shopBonusTotal)}!`;
-      events.feedbackColor = '#86EFAC';
+      events.feedbackText = evictionPayoutTotal > 0
+        ? `${events.feedbackText} Rent bonus +${formatMoney(shopBonusTotal)}.`
+        : `Rented Shops Daily Profit: +${formatMoney(shopBonusTotal)}!`;
+      events.feedbackColor = evictionPayoutTotal > 0 ? '#FBBF24' : '#86EFAC';
+    }
+
+    world.lastDayRevenueCents = Math.max(0, shift.earningsCents);
+
+    const loan = world.activeLoan;
+    if (loan && loan.status === 'active') {
+      loan.daysRemaining = Math.max(0, loan.daysRemaining - 1);
+      if (loan.daysRemaining <= 0 && loan.remainingDueCents > 0) {
+        const pay = Math.min(world.cashCents, loan.remainingDueCents);
+        if (pay > 0) {
+          world.cashCents -= pay;
+          loan.remainingDueCents -= pay;
+        }
+        if (loan.remainingDueCents <= 0) {
+          loan.status = 'repaid';
+          loan.remainingDueCents = 0;
+          events.feedbackText = `Bank Loan fully repaid (${formatMoney(pay)} deducted).`;
+          events.feedbackColor = '#86EFAC';
+        } else {
+          loan.status = 'defaulted';
+          events.feedbackText = `Loan default! ${formatMoney(pay)} deducted, ${formatMoney(loan.remainingDueCents)} still unpaid.`;
+          events.feedbackColor = '#FCA5A5';
+        }
+      } else if (loan.remainingDueCents <= 0) {
+        loan.status = 'repaid';
+        loan.remainingDueCents = 0;
+        events.feedbackText = 'Bank Loan already repaid. Good standing!';
+        events.feedbackColor = '#86EFAC';
+      } else {
+        events.feedbackText = `Bank Loan due in ${loan.daysRemaining} day(s): ${formatMoney(loan.remainingDueCents)} remaining.`;
+        events.feedbackColor = '#FDE68A';
+      }
     }
     return events;
   }
@@ -5404,6 +5724,9 @@ export function stepStage1Simulation(
       events.openModalActor = actorId;
     } else if (target.kind === 'wood_master') {
       events.openWoodMaster = true;
+      events.openModalActor = actorId;
+    } else if (target.kind === 'bank') {
+      events.openBank = true;
       events.openModalActor = actorId;
     } else if (target.kind === 'buy_snacks_cart') {
       const existingOrder = (world.woodOrders ?? []).find(
@@ -6777,6 +7100,25 @@ export function stepStage1Simulation(
   for (let vIdx = 0; vIdx < visitors.length; vIdx++) {
     const v = visitors[vIdx];
     const vBias: 1 | -1 = vIdx % 2 === 0 ? -1 : 1;
+    const ownerBuildingId =
+      v.id === 'west_owner'
+        ? 'west_shop'
+        : v.id === 'center_owner'
+          ? 'center_shop'
+          : v.id === 'east_owner'
+            ? 'east_shop'
+            : null;
+    const ownerRentRec = ownerBuildingId
+      ? world.rentedShops.find((r) => r.buildingId === ownerBuildingId)
+      : undefined;
+    const ownerAway = !!ownerRentRec && world.day < ownerRentRec.nextRentDueDay;
+    if (ownerAway) {
+      v.phase = 'at_shop';
+      v.x = -999;
+      v.z = -999;
+      v.nextVisitTimer = 9999;
+      continue;
+    }
     const isSnackVis =
       world.hasSnacksCart &&
       (v.orderDrink === 'samosa' || v.orderDrink === 'pakora');
@@ -6983,80 +7325,10 @@ export function stepStage1Simulation(
     shift.salesBoostPercent = 0;
   }
 
-  const existingBeggars = getShiftBeggarKids(shift);
-  shift.beggarSpawnTimer -= dt;
-  if (shift.beggarSpawnTimer <= 0) {
-    if (existingBeggars.length < 2) {
-      const menuChoices = getAvailableMenuChoices(world, shift);
-      const orderDrink =
-        menuChoices.length > 0
-          ? menuChoices[Math.floor(Math.random() * menuChoices.length)]
-          : 'tea';
-      const isSnackReq =
-        world.hasSnacksCart && (orderDrink === 'samosa' || orderDrink === 'pakora');
-      const isColdReq =
-        world.hasColdCart &&
-        (orderDrink === 'cold_drink' || orderDrink === 'ice_cream');
-      const reqPool = isSnackReq
-        ? BEGGAR_SNACK_SLOTS
-        : isColdReq
-          ? BEGGAR_COLD_SLOTS
-          : BEGGAR_KID_SLOTS;
-      const reqKind = isSnackReq ? 'snack' : isColdReq ? 'cold' : 'tea';
-
-      const takenSlots = new Set(
-        existingBeggars
-          .filter((b) => {
-            const bKind =
-              world.hasSnacksCart &&
-              (b.orderDrink === 'samosa' || b.orderDrink === 'pakora')
-                ? 'snack'
-                : world.hasColdCart &&
-                    (b.orderDrink === 'cold_drink' || b.orderDrink === 'ice_cream')
-                  ? 'cold'
-                  : 'tea';
-            return bKind === reqKind;
-          })
-          .map((b) => b.slotIndex)
-      );
-      let freeSlotIdx = -1;
-      for (let i = 0; i < reqPool.length; i++) {
-        if (!takenSlots.has(i)) {
-          freeSlotIdx = i;
-          break;
-        }
-      }
-      if (freeSlotIdx >= 0) {
-        const slot = reqPool[freeSlotIdx];
-        const seq = shift.nextCustomerSeq;
-        shift.nextCustomerSeq += 1;
-        const fromLeft = seq % 2 === 0;
-        const kid: BeggarKidCustomer = {
-          id: `beggar_${seq}`,
-          seq,
-          x: fromLeft ? WORLD_BOUNDS.minX + 1.2 : WORLD_BOUNDS.maxX - 1.6,
-          z: 1.12,
-          yaw: fromLeft ? Math.PI / 2 : -Math.PI / 2,
-          targetX: slot.x,
-          targetZ: slot.z,
-          slotIndex: freeSlotIdx,
-          status: 'walking_in',
-          orderDrink,
-          patience: BEGGAR_KID_WAIT_SECONDS,
-          maxPatience: BEGGAR_KID_WAIT_SECONDS,
-          eatTimer: 0,
-          walkCycle: 0,
-          shirtColor: seq % 2 === 0 ? '#78716C' : '#92400E',
-          hairColor: '#1C1917',
-          heldByHelperName: activeHelperLabel,
-        };
-        existingBeggars.push(kid);
-        events.feedbackText = `Poor Kid coming for free ${(DRINK_CATALOG[orderDrink] ?? DRINK_CATALOG.tea).name} (Help = +10% Sales & Marketing!)`;
-        events.feedbackColor = '#FDE68A';
-      }
-    }
-    shift.beggarSpawnTimer = 44 + Math.random() * 28;
-  }
+  // Beggar kids (free food) removed by design.
+  const existingBeggars: BeggarKidCustomer[] = [];
+  shift.beggarKids = [];
+  shift.beggarSpawnTimer = 99999;
 
   const nextBeggarKids: BeggarKidCustomer[] = [];
   for (const bk of existingBeggars) {
@@ -7089,6 +7361,7 @@ export function stepStage1Simulation(
       if (bk.patience <= 0) {
         bk.status = 'walking_out';
         bk.targetZ = 1.08;
+        bk.walkOutTimer = 12;
         events.feedbackText = 'Poor Kid waited 2m and left politely';
         events.feedbackColor = '#D6C7B5';
       }
@@ -7153,9 +7426,11 @@ export function stepStage1Simulation(
       if ((bk.marketingTimer ?? 0) <= 0) {
         bk.status = 'walking_out';
         bk.targetZ = 1.08;
+        bk.walkOutTimer = 12;
       }
       nextBeggarKids.push(bk);
     } else if (bk.status === 'walking_out') {
+      bk.walkOutTimer = Math.max(0, (bk.walkOutTimer ?? 12) - dt);
       const exitX =
         bk.seq % 2 === 0 ? WORLD_BOUNDS.minX + 0.6 : WORLD_BOUNDS.maxX - 0.9;
       const arrived = moveNpcWithAvoidance(
@@ -7172,11 +7447,9 @@ export function stepStage1Simulation(
           stayOnSidewalk: true,
         }
       );
-      if (
-        !arrived &&
-        bk.x > WORLD_BOUNDS.minX + 0.8 &&
-        bk.x < WORLD_BOUNDS.maxX - 1.1
-      ) {
+      const insideBounds =
+        bk.x > WORLD_BOUNDS.minX + 0.8 && bk.x < WORLD_BOUNDS.maxX - 1.1;
+      if (!arrived && insideBounds && (bk.walkOutTimer ?? 0) > 0) {
         nextBeggarKids.push(bk);
       }
     }

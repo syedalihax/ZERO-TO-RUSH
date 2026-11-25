@@ -326,6 +326,107 @@ export const WOOD_MASTER_SHOP = {
   masterShirtHex: '#B45309',
 } as const;
 
+// Small Roadside Bank Booth (Loan / Collateral)
+export const BANK_SHOP = {
+  shopName: 'City Micro Bank',
+  bankerName: 'Mr. Farooq',
+  bounds: { minX: 48.2, maxX: 52.0, minZ: -9.4, maxZ: -5.4 },
+  doorMinX: 49.1,
+  doorMaxX: 51.1,
+  bankerPos: { x: 50.1, z: -8.25 },
+  counterPos: { x: 50.1, z: -7.15 },
+  wallHex: 0xdbeafe,
+  awningHex: 0x1d4ed8,
+  bankerShirtHex: '#1E3A8A',
+} as const;
+
+export interface BankLoanOption {
+  id: 'starter_10' | 'business_50' | 'business_100' | 'business_200';
+  name: string;
+  principalCents: number;
+  interestRatePercent: number;
+  daysToRepay: number;
+  description: string;
+  freshPlayerOnly?: boolean;
+}
+
+export const BANK_LOAN_OPTIONS: BankLoanOption[] = [
+  {
+    id: 'starter_10',
+    name: 'Fresh Starter Loan',
+    principalCents: 1000,
+    interestRatePercent: 10,
+    daysToRepay: 2,
+    freshPlayerOnly: true,
+    description:
+      'Naye player ke liye chhota loan. $10 lo, $11 wapas do (10% interest).',
+  },
+  {
+    id: 'business_50',
+    name: 'Business Loan $50',
+    principalCents: 5000,
+    interestRatePercent: 12,
+    daysToRepay: 3,
+    description: 'Apna business grow karo. Daily revenue ke hisaab se approve hota hai.',
+  },
+  {
+    id: 'business_100',
+    name: 'Business Loan $100',
+    principalCents: 10000,
+    interestRatePercent: 14,
+    daysToRepay: 4,
+    description: 'Bara business expansion loan. Strong daily revenue chahiye.',
+  },
+  {
+    id: 'business_200',
+    name: 'Business Loan $200',
+    principalCents: 20000,
+    interestRatePercent: 16,
+    daysToRepay: 5,
+    description: 'Sab se bara business loan. High daily revenue par hi milta hai.',
+  },
+];
+
+export function getBankMaxLoanCents(lastDayRevenueCents: number): number {
+  return Math.max(0, Math.floor(lastDayRevenueCents * 2));
+}
+
+export function isFreshBankPlayer(world: {
+  day: number;
+  lastDayRevenueCents?: number;
+  totalServed: number;
+}): boolean {
+  return world.day <= 1 && (world.lastDayRevenueCents ?? 0) <= 0 && world.totalServed <= 0;
+}
+
+export function getBankLoanEligibility(world: {
+  day: number;
+  lastDayRevenueCents?: number;
+  totalServed: number;
+}): { maxLoanCents: number; freshPlayer: boolean; reason: string } {
+  const revenue = world.lastDayRevenueCents ?? 0;
+  const freshPlayer =
+    isFreshBankPlayer(world) || revenue <= 0;
+
+  if (freshPlayer) {
+    return {
+      maxLoanCents: 1000,
+      freshPlayer: true,
+      reason:
+        revenue > 0
+          ? 'Naye player ke liye starter $10 loan available hai (10% interest).'
+          : 'Aapki last day revenue $0.00 hai, is liye bank abhi starter $10 loan de sakta hai. Jab revenue barhegi, $50/$100/$200 business loans unlock honge.',
+    };
+  }
+
+  const maxLoanCents = getBankMaxLoanCents(revenue);
+  return {
+    maxLoanCents,
+    freshPlayer: false,
+    reason: `Aapki last day revenue ${formatMoney(revenue)} hai, is liye bank aapko ${formatMoney(maxLoanCents)} tak loan de sakta hai.`,
+  };
+}
+
 export interface WoodMasterCatalogItem {
   kind: WoodOrderKind;
   name: string;

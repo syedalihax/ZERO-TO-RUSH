@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  BANK_LOAN_OPTIONS,
+  getBankLoanEligibility,
   CHAI_STALL_PRICE_CENTS,
   CHAIR_PRICE_CENTS,
   DRINK_CATALOG,
@@ -11,6 +13,7 @@ import {
   RENTABLE_BUILDINGS,
   RESALE_RATE,
   SHOP_WEEK_DAYS,
+  SHOP_KITCHEN_PRICE_CENTS,
   SNACKS_CART_PRICE_CENTS,
   SUPERMARKET_CATALOG,
   TABLE_PRICE_CENTS,
@@ -44,6 +47,7 @@ import type {
   WorldSave,
 } from '@/lib/game/types';
 import { useIsMobile } from '@/hooks/use-mobile';
+import BankModal from './BankModal';
 import BuildingRentModal from './BuildingRentModal';
 import CoopInviteModal from './CoopInviteModal';
 import CustomerActionModal from './CustomerActionModal';
@@ -62,7 +66,7 @@ import WorldSelectModal from './WorldSelectModal';
 type ScreenState = 'TITLE' | 'WORLD_SELECT' | 'PLAYING';
 
 interface CustomerActionState {
-  kind: 'customer' | 'car' | 'owner_customer' | 'shop_visitor' | 'beggar_kid';
+  kind: 'customer' | 'car' | 'owner_customer' | 'shop_visitor' | 'beggar_kid' | 'beggar_helper';
   id: string;
   requestedDrink: DrinkType;
   actorId?: 'p1' | 'p2';
@@ -97,6 +101,8 @@ export default function RushHourCafeApp() {
   const [showGearBuyer, setShowGearBuyer] = useState(false);
   const [showWoodMaster, setShowWoodMaster] = useState(false);
   const [woodMasterActor, setWoodMasterActor] = useState<'p1' | 'p2'>('p1');
+  const [showBank, setShowBank] = useState(false);
+  const [bankActor, setBankActor] = useState<'p1' | 'p2'>('p1');
   const [showCoopModal, setShowCoopModal] = useState(false);
   const [showSalesMenu, setShowSalesMenu] = useState(false);
   const [buildingOwnerId, setBuildingOwnerId] = useState<ShopBuildingId | null>(
@@ -139,6 +145,7 @@ export default function RushHourCafeApp() {
       activeHelperId !== null ||
       showGearBuyer ||
       showWoodMaster ||
+      showBank ||
       showCoopModal ||
       showSalesMenu ||
       buildingOwnerId !== null ||
@@ -154,6 +161,7 @@ export default function RushHourCafeApp() {
     activeHelperId,
     showGearBuyer,
     showWoodMaster,
+    showBank,
     showCoopModal,
     showSalesMenu,
     buildingOwnerId,
@@ -240,6 +248,7 @@ export default function RushHourCafeApp() {
     setActiveHelperId(null);
     setShowGearBuyer(false);
     setShowWoodMaster(false);
+    setShowBank(false);
     setShowCoopModal(false);
     setShowSalesMenu(false);
     setBuildingOwnerId(null);
@@ -424,6 +433,11 @@ export default function RushHourCafeApp() {
             status: 'hired' as const,
             task: 'idle' as const,
             statusNote: 'Ready to Help',
+            beggingState: 'at_mat' as const,
+            beggingDrink: null,
+            beggingPatience: 0,
+            beggingMaxPatience: 120,
+            heldByHelperName: null,
           }
         : h
     );
@@ -504,6 +518,51 @@ export default function RushHourCafeApp() {
       color: '#C4B5FD',
     });
     feedbackTimerRef.current = 2.8;
+    persistWorld(nextWorld);
+  }, []);
+
+  const handleVacateBuilding = useCallback((id: ShopBuildingId) => {
+    const w = worldRef.current;
+    const s = shiftRef.current;
+    if (!w) return;
+    const cfg = RENTABLE_BUILDINGS.find((b) => b.id === id);
+    const rec = w.rentedShops.find((r) => r.buildingId === id);
+    if (!cfg || !rec) return;
+
+    const b = cfg.bounds;
+    const inside = (x: number, z: number) =>
+      x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ;
+    const chairsInside = w.placedChairs.filter((c) => inside(c.x, c.z));
+    const tablesInside = w.placedTables.filter((t) => inside(t.x, t.z));
+    const hasKitchen = (w.shopKitchens ?? []).includes(id);
+    const payout =
+      chairsInside.length * Math.floor(CHAIR_PRICE_CENTS * RESALE_RATE) +
+      tablesInside.length * Math.floor(TABLE_PRICE_CENTS * RESALE_RATE) +
+      (hasKitchen ? Math.floor(SHOP_KITCHEN_PRICE_CENTS * RESALE_RATE) : 0);
+
+    const nextWorld: WorldSave = {
+      ...w,
+      cashCents: w.cashCents + payout,
+      rentedShops: w.rentedShops.filter((r) => r.buildingId !== id),
+      shopKitchens: (w.shopKitchens ?? []).filter((k) => k !== id),
+      placedChairs: w.placedChairs.filter((c) => !inside(c.x, c.z)),
+      placedTables: w.placedTables.filter((t) => !inside(t.x, t.z)),
+      lastPlayedAt: Date.now(),
+      activeShift: s ?? w.activeShift,
+    };
+
+    worldRef.current = nextWorld;
+    setBuildingOwnerId(null);
+    setActiveWorld(nextWorld);
+    setFeedbackBanner({
+      text:
+        payout > 0
+          ? `${cfg.shopName} vacated. Items sold at -50% for ${formatMoney(payout)}.`
+          : `${cfg.shopName} vacated.`,
+      color: '#FCA5A5',
+    });
+    feedbackTimerRef.current = 3.2;
+    cafeAudio.play('money');
     persistWorld(nextWorld);
   }, []);
 
@@ -685,6 +744,96 @@ export default function RushHourCafeApp() {
     feedbackTimerRef.current = 2.6;
     persistWorld(nextWorld);
   }, [woodMasterActor]);
+
+  const handleTakeBankLoan = useCallback((optionId: 'starter_10' | 'business_50' | 'business_100' | 'business_200') => {
+    const w = worldRef.current;
+    const s = shiftRef.current;
+    if (!w || !s) return;
+    if (w.activeLoan && w.activeLoan.status === 'active') return;
+
+    const option = BANK_LOAN_OPTIONS.find((o) => o.id === optionId);
+    if (!option) return;
+
+    const eligibility = getBankLoanEligibility(w);
+    if (option.freshPlayerOnly && !eligibility.freshPlayer) return;
+    if (!option.freshPlayerOnly && option.principalCents > eligibility.maxLoanCents) return;
+
+    const totalDueCents = Math.round(
+      option.principalCents * (1 + option.interestRatePercent / 100)
+    );
+    const nextWorld: WorldSave = {
+      ...w,
+      cashCents: w.cashCents + option.principalCents,
+      activeLoan: {
+        id: `loan_${Date.now()}`,
+        label: option.name,
+        principalCents: option.principalCents,
+        interestRatePercent: option.interestRatePercent,
+        totalDueCents,
+        remainingDueCents: totalDueCents,
+        daysRemaining: option.daysToRepay,
+        takenOnDay: w.day,
+        status: 'active',
+      },
+      lastPlayedAt: Date.now(),
+    };
+
+    worldRef.current = nextWorld;
+    cafeAudio.play('buy');
+    setActiveWorld(nextWorld);
+    setFeedbackBanner({
+      text: `Loan approved! +${formatMoney(option.principalCents)} mila. ${formatMoney(totalDueCents)} wapas karna hoga (${option.interestRatePercent}% interest, ${option.daysToRepay} din).`,
+      color: '#86EFAC',
+    });
+    feedbackTimerRef.current = 3.2;
+    persistWorld(nextWorld);
+  }, []);
+
+  const handleRepayBankLoan = useCallback((amountCents?: number) => {
+    const w = worldRef.current;
+    const s = shiftRef.current;
+    if (!w || !s) return;
+    const loan = w.activeLoan;
+    if (!loan || loan.status !== 'active') return;
+
+    const pay = Math.min(
+      loan.remainingDueCents,
+      w.cashCents,
+      Math.max(0, amountCents ?? loan.remainingDueCents)
+    );
+    if (pay <= 0) {
+      cafeAudio.play('error');
+      setFeedbackBanner({ text: 'Not enough cash to repay loan.', color: '#FCA5A5' });
+      feedbackTimerRef.current = 2.0;
+      return;
+    }
+
+    const remainingDueCents = loan.remainingDueCents - pay;
+    const nextLoan = {
+      ...loan,
+      remainingDueCents,
+      status: remainingDueCents <= 0 ? ('repaid' as const) : ('active' as const),
+    };
+    const nextWorld: WorldSave = {
+      ...w,
+      cashCents: w.cashCents - pay,
+      activeLoan: nextLoan,
+      lastPlayedAt: Date.now(),
+    };
+
+    worldRef.current = nextWorld;
+    cafeAudio.play('buy');
+    setActiveWorld(nextWorld);
+    setFeedbackBanner({
+      text:
+        remainingDueCents <= 0
+          ? `Loan fully repaid! ${formatMoney(pay)} paid.`
+          : `Loan payment: ${formatMoney(pay)} paid, ${formatMoney(remainingDueCents)} remaining.`,
+      color: '#86EFAC',
+    });
+    feedbackTimerRef.current = 2.4;
+    persistWorld(nextWorld);
+  }, []);
 
   const handleToggleCoop = useCallback(() => {
     const w = worldRef.current;
@@ -1196,7 +1345,17 @@ export default function RushHourCafeApp() {
       day: nextDay,
       lastPlayedAt: Date.now(),
     };
-    const freshShift = createInitialShift(nextWorld, prevShift.inventory);
+    const freshShift = createInitialShift(nextWorld, prevShift.inventory, {
+      playerHolding: prevShift.player.holding,
+      player2Holding: prevShift.player2?.holding ?? null,
+      player2Active: Boolean(prevShift.player2?.active),
+      trayItems: prevShift.trayItems ?? [prevShift.trayItem ?? null, null, null, null],
+      snackTrayItems: prevShift.snackTrayItems ?? [null, null],
+      coldTrayItems: prevShift.coldTrayItems ?? [null, null],
+      kettle: prevShift.kettle,
+      fryer: prevShift.fryer,
+      chiller: prevShift.chiller,
+    });
     nextWorld.activeShift = freshShift;
 
     worldRef.current = nextWorld;
@@ -1211,6 +1370,7 @@ export default function RushHourCafeApp() {
     setActiveHelperId(null);
     setShowGearBuyer(false);
     setShowWoodMaster(false);
+    setShowBank(false);
     setShowCoopModal(false);
     setShowSalesMenu(false);
     setBuildingOwnerId(null);
@@ -1230,6 +1390,7 @@ export default function RushHourCafeApp() {
     setActiveHelperId(null);
     setShowGearBuyer(false);
     setShowWoodMaster(false);
+    setShowBank(false);
     setShowCoopModal(false);
     setShowSalesMenu(false);
     setBuildingOwnerId(null);
@@ -1414,6 +1575,10 @@ export default function RushHourCafeApp() {
             setWoodMasterActor(simEvents.openModalActor ?? 'p1');
             setShowWoodMaster(true);
           }
+          if (simEvents.openBank) {
+            setBankActor(simEvents.openModalActor ?? 'p1');
+            setShowBank(true);
+          }
           if (simEvents.openCustomerAction) {
             setCustomerAction(simEvents.openCustomerAction);
           }
@@ -1580,6 +1745,7 @@ export default function RushHourCafeApp() {
             !activeHelperId &&
             !showGearBuyer &&
             !showWoodMaster &&
+            !showBank &&
             !showCoopModal &&
             !showSalesMenu &&
             !buildingOwnerId &&
@@ -1691,6 +1857,7 @@ export default function RushHourCafeApp() {
               world={activeWorld}
               buildingId={buildingOwnerId}
               onRentOrPay={handleRentOrPayBuilding}
+              onVacate={handleVacateBuilding}
               onClose={() => setBuildingOwnerId(null)}
             />
           )}
@@ -1720,6 +1887,15 @@ export default function RushHourCafeApp() {
               onPlaceOrder={handlePlaceWoodOrder}
               onReceiveOrder={handleReceiveWoodOrder}
               onClose={() => setShowWoodMaster(false)}
+            />
+          )}
+
+          {showBank && (
+            <BankModal
+              world={activeWorld}
+              onTakeLoan={handleTakeBankLoan}
+              onRepayLoan={handleRepayBankLoan}
+              onClose={() => setShowBank(false)}
             />
           )}
 

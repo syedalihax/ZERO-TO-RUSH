@@ -103,6 +103,9 @@ export type HelperTask =
   | 'fetching_cone'
   | 'adding_ic_mix'
   | 'adding_ice'
+  | 'fetching_cold_base'
+  | 'prepping_icecream_mix'
+  | 'adding_ice_block'
   | 'to_chiller'
   | 'waiting_chill'
   | 'serving';
@@ -144,6 +147,11 @@ export interface HelperKidState {
   marketingTimer?: number;
   marketingCallTimer?: number;
   heldByHelperName?: string | null;
+  beggingWalkTimer?: number;
+  beggingTargetX?: number;
+  beggingTargetZ?: number;
+  patience?: number;
+  maxPatience?: number;
 }
 
 export interface MilkmanState {
@@ -249,6 +257,7 @@ export interface BeggarKidCustomer {
   marketingTimer?: number;
   marketingMoveTimer?: number;
   marketingCallTimer?: number;
+  walkOutTimer?: number;
 }
 
 export interface TeaCustomer {
@@ -334,6 +343,7 @@ export type InteractTargetKind =
   | 'supermarket_pickup'
   | 'wood_master'
   | 'wood_master_pickup'
+  | 'bank'
   | 'furniture_chair'
   | 'furniture_table'
   | 'place_furniture'
@@ -377,6 +387,18 @@ export interface RentedShopRecord {
   rentedOnDay: number;
   nextRentDueDay: number;
   weeksPaid: number;
+}
+
+export interface BankLoan {
+  id: string;
+  label: string;
+  principalCents: number;
+  interestRatePercent: number;
+  totalDueCents: number;
+  remainingDueCents: number;
+  daysRemaining: number;
+  takenOnDay: number;
+  status: 'active' | 'repaid' | 'defaulted';
 }
 
 export interface ShiftSnapshot {
@@ -434,6 +456,8 @@ export interface WorldSave {
   woodOrders?: WoodMasterOrder[];
   furniture: CafeFurniture[];
   pendingFurniture: FurnitureKind[];
+  activeLoan?: BankLoan | null;
+  lastDayRevenueCents?: number;
   activeShift: ShiftSnapshot | null;
 }
 
@@ -467,6 +491,7 @@ export interface SimStepEvents {
   openHelperId?: HelperNpcId | null;
   openGearBuyer: boolean;
   openWoodMaster?: boolean;
+  openBank?: boolean;
   openModalActor?: 'p1' | 'p2';
   openBuildingOwnerId: ShopBuildingId | null;
   openCustomerAction: {
@@ -499,6 +524,7 @@ export interface ProjectedLabel {
     | 'building_owner'
     | 'gear_buyer'
     | 'wood_master'
+    | 'bank'
     | 'coop_partner'
     | 'car'
     | 'kettle'

@@ -151,6 +151,8 @@ export default function GameHUD({
                                         ? 'border-[#C084FC]'
                                         : lbl.kind === 'wood_master'
                                           ? 'border-[#D97706]'
+                                          : lbl.kind === 'bank'
+                                            ? 'border-[#34D399]'
                                           : lbl.kind === 'car' ||
                                               lbl.kind === 'counter_tray' ||
                                               lbl.kind === 'fryer' ||
