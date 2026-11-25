@@ -3933,7 +3933,7 @@ function stepHelperNpc(
   const activeStations = shopKs ?? STATIONS;
   const activeTrays = shopKs ? shopKs.trays : TRAY_SPOTS;
   const hasTeaKitchen = world.hasTeaStall !== false || firstKitchen !== null;
-  const helperWorkZ = shopKs ? shopKs.standZ : -2.28;
+  const helperWorkZ = shopKs ? shopKs.standZ : -2.78;
   const helperIdle = isSnacksOnly
     ? cfg.idlePos
     : shopKs
@@ -3942,7 +3942,7 @@ function stepHelperNpc(
           z: shopKs.standZ + 0.3,
         }
       : world.hasTeaStall === false && world.hasSnacksCart
-        ? { x: SNACKS_CART_ANCHOR.x + (helperId === 'babloo' ? 1.2 : 0), z: -2.45 }
+        ? { x: SNACKS_CART_ANCHOR.x + (helperId === 'babloo' ? 1.2 : 0), z: -2.95 }
         : cfg.idlePos;
 
   const moveHelperTo = (
@@ -4109,7 +4109,7 @@ function stepHelperNpc(
         const emptyIdx = sTrays.findIndex((t) => t === null);
         if (emptyIdx >= 0 && SNACK_TRAY_SPOTS[emptyIdx]) {
           const spot = SNACK_TRAY_SPOTS[emptyIdx];
-          const arrived = moveHelperTo(spot.x, -2.28);
+          const arrived = moveHelperTo(spot.x, -2.78);
           if (arrived) {
             sTrays[emptyIdx] = helper.holding;
             shift.snackTrayItems = sTrays;
@@ -4132,7 +4132,7 @@ function stepHelperNpc(
         const emptyIdx = cTrays.findIndex((t) => t === null);
         if (emptyIdx >= 0 && COLD_TRAY_SPOTS[emptyIdx]) {
           const spot = COLD_TRAY_SPOTS[emptyIdx];
-          const arrived = moveHelperTo(spot.x, -2.28);
+          const arrived = moveHelperTo(spot.x, -2.78);
           if (arrived) {
             cTrays[emptyIdx] = helper.holding;
             shift.coldTrayItems = cTrays;
@@ -4225,7 +4225,7 @@ function stepHelperNpc(
             shift
           ).z
         : nearSnacksCart || nearColdCart || nearTeaCart
-          ? -2.28
+          ? -2.78
           : clamp(target.z - 1.15, -4.5, 1.25);
 
     if (target.isCar) {
@@ -4307,7 +4307,10 @@ function stepHelperNpc(
     shift.kettle.brewingDrink
   ) {
     const matchCust = pickBestWaitingTarget(shift.kettle.brewingDrink, false);
-    if (matchCust) {
+    const kettleClaimedByGrabber = otherHelpers.some(
+      (h) => h.status === 'hired' && h.holding === null && h.statusNote === 'Grabbing boiled cup'
+    );
+    if (matchCust && !kettleClaimedByGrabber) {
       helper.statusNote = 'Grabbing boiled cup';
       const arrived = moveHelperTo(activeStations.kettle.x, helperWorkZ, 2.85);
       if (arrived) {
@@ -4336,9 +4339,12 @@ function stepHelperNpc(
     !fryerClaimedByWaitingHelper
   ) {
     const matchCust = pickBestWaitingTarget(shift.fryer.fryingSnack, false);
-    if (matchCust) {
+    const fryerClaimedByGrabber = otherHelpers.some(
+      (h) => h.status === 'hired' && h.holding === null && h.statusNote === `Grabbing hot ${DRINK_CATALOG[shift.fryer.fryingSnack!].name}`
+    );
+    if (matchCust && !fryerClaimedByGrabber) {
       helper.statusNote = `Grabbing hot ${DRINK_CATALOG[shift.fryer.fryingSnack].name}`;
-      const arrived = moveHelperTo(SNACK_STATIONS.kadhai.x, -2.28, 2.85);
+      const arrived = moveHelperTo(SNACK_STATIONS.kadhai.x, -2.78, 2.85);
       if (arrived) {
         helper.holding = drinkToHotItem(shift.fryer.fryingSnack);
         shift.fryer.status = 'idle';
@@ -4365,9 +4371,12 @@ function stepHelperNpc(
     !chillerClaimedByWaitingHelper
   ) {
     const matchCust = pickBestWaitingTarget(shift.chiller.chillingItem, false);
-    if (matchCust) {
+    const chillerClaimedByGrabber = otherHelpers.some(
+      (h) => h.status === 'hired' && h.holding === null && h.statusNote === `Grabbing chilled ${DRINK_CATALOG[shift.chiller.chillingItem!].name}`
+    );
+    if (matchCust && !chillerClaimedByGrabber) {
       helper.statusNote = `Grabbing chilled ${DRINK_CATALOG[shift.chiller.chillingItem].name}`;
-      const arrived = moveHelperTo(COLD_STATIONS.chiller.x, -2.28, 2.85);
+      const arrived = moveHelperTo(COLD_STATIONS.chiller.x, -2.78, 2.85);
       if (arrived) {
         helper.holding = drinkToHotItem(shift.chiller.chillingItem);
         shift.chiller.status = 'idle';
@@ -4425,7 +4434,7 @@ function stepHelperNpc(
         if (match && SNACK_TRAY_SPOTS[i]) {
           const spot = SNACK_TRAY_SPOTS[i];
           helper.statusNote = `Grabbing ${DRINK_CATALOG[trayDrink].name}`;
-          const arrived = moveHelperTo(spot.x, -2.28, 2.85);
+          const arrived = moveHelperTo(spot.x, -2.78, 2.85);
           if (arrived) {
             helper.holding = item;
             sTrays[i] = null;
@@ -4448,7 +4457,7 @@ function stepHelperNpc(
         if (match && COLD_TRAY_SPOTS[i]) {
           const spot = COLD_TRAY_SPOTS[i];
           helper.statusNote = `Grabbing ${DRINK_CATALOG[trayDrink].name}`;
-          const arrived = moveHelperTo(spot.x, -2.28, 2.85);
+          const arrived = moveHelperTo(spot.x, -2.78, 2.85);
           if (arrived) {
             helper.holding = item;
             cTrays[i] = null;
@@ -4734,7 +4743,7 @@ function stepHelperNpc(
       helper.task = 'prepping_snack';
       return;
     }
-    const arrived = moveHelperTo(SNACK_STATIONS.snack_plates.x, -2.28);
+    const arrived = moveHelperTo(SNACK_STATIONS.snack_plates.x, -2.78);
     if (arrived) {
       helper.holding = 'paper_plate';
       helper.task = 'prepping_snack';
@@ -4754,7 +4763,7 @@ function stepHelperNpc(
     const station = isPakora
       ? SNACK_STATIONS.pakora_prep
       : SNACK_STATIONS.samosa_prep;
-    const arrived = moveHelperTo(station.x, -2.28);
+    const arrived = moveHelperTo(station.x, -2.78);
     if (arrived) {
       if (isPakora && shift.inventory.pakoraMix > 0) {
         shift.inventory.pakoraMix -= 1;
@@ -4782,7 +4791,7 @@ function stepHelperNpc(
       helper.task = 'idle';
       return;
     }
-    const arrived = moveHelperTo(SNACK_STATIONS.kadhai.x, -2.28);
+    const arrived = moveHelperTo(SNACK_STATIONS.kadhai.x, -2.78);
     if (arrived) {
       helper.yaw = dampAngle(helper.yaw, 0, 8, dt);
       if (shift.fryer.status === 'idle') {
@@ -4967,7 +4976,7 @@ function stepHelperNpc(
     const station = isIceCream
       ? COLD_STATIONS.cone_stack
       : COLD_STATIONS.soda_crate;
-    const arrived = moveHelperTo(station.x, -2.28);
+    const arrived = moveHelperTo(station.x, -2.78);
     if (arrived) {
       if (isIceCream && (shift.inventory.iceCreamCones ?? 0) > 0) {
         shift.inventory.iceCreamCones -= 1;
@@ -4995,7 +5004,7 @@ function stepHelperNpc(
       helper.task = 'idle';
       return;
     }
-    const arrived = moveHelperTo(COLD_STATIONS.icecream_tub.x, -2.28);
+    const arrived = moveHelperTo(COLD_STATIONS.icecream_tub.x, -2.78);
     if (arrived) {
       if ((shift.inventory.iceCreamMix ?? 0) > 0) {
         shift.inventory.iceCreamMix -= 1;
@@ -5017,7 +5026,7 @@ function stepHelperNpc(
       helper.task = 'idle';
       return;
     }
-    const arrived = moveHelperTo(COLD_STATIONS.ice_box.x, -2.28);
+    const arrived = moveHelperTo(COLD_STATIONS.ice_box.x, -2.78);
     if (arrived) {
       if ((shift.inventory.iceBlocks ?? 0) > 0) {
         shift.inventory.iceBlocks -= 1;
@@ -5042,7 +5051,7 @@ function stepHelperNpc(
       helper.task = 'idle';
       return;
     }
-    const arrived = moveHelperTo(COLD_STATIONS.chiller.x, -2.28);
+    const arrived = moveHelperTo(COLD_STATIONS.chiller.x, -2.78);
     if (arrived) {
       helper.yaw = dampAngle(helper.yaw, 0, 8, dt);
       if ((shift.chiller?.status ?? 'idle') === 'idle') {
@@ -5297,18 +5306,18 @@ export function stepStage1Simulation(
       const inside = (x: number, z: number) =>
         x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ;
 
-      const chairsInside = world.placedChairs.filter((c) => inside(c.x, c.z));
-      const tablesInside = world.placedTables.filter((t) => inside(t.x, t.z));
+      const furnitureInside = (world.furniture ?? []).filter((f) => inside(f.x, f.z));
+      const chairsInside = furnitureInside.filter((f) => f.kind === 'chair');
+      const tablesInside = furnitureInside.filter((f) => f.kind === 'table');
       const chairRefund = chairsInside.length * Math.floor(CHAIR_PRICE_CENTS * RESALE_RATE);
       const tableRefund = tablesInside.length * Math.floor(TABLE_PRICE_CENTS * RESALE_RATE);
-      const kitchenRefund = world.shopKitchens.includes(rec.buildingId)
+      const kitchenRefund = (world.shopKitchens ?? []).includes(rec.buildingId)
         ? Math.floor(SHOP_KITCHEN_PRICE_CENTS * RESALE_RATE)
         : 0;
       const payout = chairRefund + tableRefund + kitchenRefund;
 
-      world.placedChairs = world.placedChairs.filter((c) => !inside(c.x, c.z));
-      world.placedTables = world.placedTables.filter((t) => !inside(t.x, t.z));
-      world.shopKitchens = world.shopKitchens.filter((id) => id !== rec.buildingId);
+      world.furniture = (world.furniture ?? []).filter((f) => !inside(f.x, f.z));
+      world.shopKitchens = (world.shopKitchens ?? []).filter((id) => id !== rec.buildingId);
       world.rentedShops = world.rentedShops.filter((r) => r.buildingId !== rec.buildingId);
 
       if (payout > 0) {
@@ -5316,7 +5325,7 @@ export function stepStage1Simulation(
         evictionPayoutTotal += payout;
       }
       evictedShopIds.push(cfg.shopName);
-      events.sounds.push('money');
+      events.sounds.push('buy');
     }
     if (evictedShopIds.length > 0) {
       events.feedbackText =

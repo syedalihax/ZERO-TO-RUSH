@@ -23,7 +23,7 @@ export const RANDOM_TIP_AMOUNTS_CENTS = [10, 15, 20, 25] as const;
 export const HELPER_CHARITY_CENTS = 25; // $0.25 charity
 export const HELPER_WAGE_CENTS = 15; // $0.15 wage paid per customer served for 1 day
 export const SNACKS_HELPER_WAGE_RATE = 0.2; // 20% of Samosa/Pakora price ($0.16 Samosa / $0.14 Pakora)
-export const KID_SIT_POS = { x: 9.2, z: -3.08 };
+export const KID_SIT_POS = { x: 9.2, z: -4.08 };
 export const HELPER_IDLE_SPOT = { x: -2.2, z: -2.45 };
 
 export interface HelperNpcConfig {
@@ -62,8 +62,8 @@ export const HELPER_NPCS: Record<HelperNpcId, HelperNpcConfig> = {
     title: 'Munni (Little Girl Outside Second-Hand Shop)',
     gender: 'girl',
     role: 'snacks_only',
-    sitPos: { x: 28.4, z: -4.15 },
-    idlePos: { x: -11.4, z: -2.45 },
+    sitPos: { x: 28.4, z: -5.15 },
+    idlePos: { x: -11.4, z: -2.95 },
     shirtHex: '#DB2777',
     hairHex: '#1C1917',
     scale: 0.64,
@@ -76,8 +76,8 @@ export const HELPER_NPCS: Record<HelperNpcId, HelperNpcConfig> = {
     title: 'Babloo (Boy Outside Bazaar Corner Shop)',
     gender: 'boy',
     role: 'general',
-    sitPos: { x: -15.4, z: -4.15 },
-    idlePos: { x: -0.2, z: -2.45 },
+    sitPos: { x: -15.4, z: -5.15 },
+    idlePos: { x: 0.6, z: -2.95 },
     shirtHex: '#0F766E',
     hairHex: '#292524',
     scale: 0.67,
@@ -125,78 +125,78 @@ export const DASH_COOLDOWN = 0.85;
 export const WORLD_BOUNDS = {
   minX: -29.8,
   maxX: 52.5,
-  minZ: -19.8, // Walk freely behind every building's backside!
+  minZ: -20.8, // Walk freely behind every building's backside!
   maxZ: 8.1, // Walk freely onto and across the full road!
 };
 
-// Authentic Pakistani 4-Wheel Chai Readi (7.4m long x 1.64m wide/deep, centered at x = -2.2, z = -1.15)
-export const CYCLE_ANCHOR = { x: -2.2, z: -1.15 };
+// Authentic Pakistani 4-Wheel Chai Readi (7.4m long x 1.64m wide/deep, centered at x = -2.2, z = -1.65)
+export const CYCLE_ANCHOR = { x: -2.2, z: -1.65 };
 
 // 2nd Readi: Samosa & Pakora Cart on expanded left plaza (4.8m long x 1.64m wide/deep)
-export const SNACKS_CART_ANCHOR = { x: -11.4, z: -1.15 };
+export const SNACKS_CART_ANCHOR = { x: -11.4, z: -1.65 };
 
 // 3rd Readi: Cold Drinks & Ice Cream Cart on right plaza in front of Supermarket side (4.8m long x 1.64m wide/deep)
-export const COLD_CART_ANCHOR = { x: 9.8, z: -1.15 };
+export const COLD_CART_ANCHOR = { x: 9.8, z: -1.65 };
 
 // Every station sits strictly INSIDE the 7.4m x 1.64m Chai Readi deck
 // Back row holds prep stations; entire front row holds 4 Free Space mats!
 export const STATIONS = {
-  kettle: { x: -5.25, z: -1.52, label: 'Boiling Kettle' },
-  milk_crate: { x: -4.55, z: -1.52, label: 'Milk Packets' },
-  water_jug: { x: -3.85, z: -1.52, label: 'Water Jug' },
-  sugar_jar: { x: -3.15, z: -1.52, label: 'Sugar Jar' },
-  coffee_jar: { x: -2.45, z: -1.52, label: 'Coffee Beans Jar' },
-  tea_tin: { x: -1.75, z: -1.52, label: 'Tea Leaves Tin' },
-  cups: { x: -1.05, z: -1.52, label: 'Cup Basket' },
-  biscuit_box: { x: -0.35, z: -1.52, label: 'Tea Biscuits Box' },
-  cupcake_box: { x: 0.35, z: -1.52, label: 'Mini Cupcakes Box' },
-  counter_tray: { x: 0.6, z: -0.72, label: 'Readi Free Space' },
+  kettle: { x: -5.25, z: -2.02, label: 'Boiling Kettle' },
+  milk_crate: { x: -4.55, z: -2.02, label: 'Milk Packets' },
+  water_jug: { x: -3.85, z: -2.02, label: 'Water Jug' },
+  sugar_jar: { x: -3.15, z: -2.02, label: 'Sugar Jar' },
+  coffee_jar: { x: -2.45, z: -2.02, label: 'Coffee Beans Jar' },
+  tea_tin: { x: -1.75, z: -2.02, label: 'Tea Leaves Tin' },
+  cups: { x: -1.05, z: -2.02, label: 'Cup Basket' },
+  biscuit_box: { x: -0.35, z: -2.02, label: 'Tea Biscuits Box' },
+  cupcake_box: { x: 0.35, z: -2.02, label: 'Mini Cupcakes Box' },
+  counter_tray: { x: 0.6, z: -1.22, label: 'Readi Free Space' },
 } as const;
 
 export const TRAY_SPOTS = [
-  { x: -4.85, z: -0.72, label: 'Front Left Space' },
-  { x: -3.05, z: -0.72, label: 'Front Center-Left Space' },
-  { x: -1.25, z: -0.72, label: 'Front Center-Right Space' },
-  { x: 0.6, z: -0.72, label: 'Front Right Space' },
+  { x: -4.85, z: -1.22, label: 'Front Left Space' },
+  { x: -3.05, z: -1.22, label: 'Front Center-Left Space' },
+  { x: -1.25, z: -1.22, label: 'Front Center-Right Space' },
+  { x: 0.6, z: -1.22, label: 'Front Right Space' },
 ] as const;
 
 // 2nd Readi (Samosa & Pakora Cart) stations
 export const SNACK_STATIONS = {
-  kadhai: { x: -13.0, z: -1.48, label: 'Hot Oil Kadhai' },
-  samosa_prep: { x: -11.9, z: -1.48, label: 'Aloo Samosa Tray' },
-  pakora_prep: { x: -10.8, z: -1.48, label: 'Besan Pakora Bowl' },
-  snack_plates: { x: -9.75, z: -1.48, label: 'Serving Paper Plates' },
+  kadhai: { x: -13.0, z: -1.98, label: 'Hot Oil Kadhai' },
+  samosa_prep: { x: -11.9, z: -1.98, label: 'Aloo Samosa Tray' },
+  pakora_prep: { x: -10.8, z: -1.98, label: 'Besan Pakora Bowl' },
+  snack_plates: { x: -9.75, z: -1.98, label: 'Serving Paper Plates' },
 } as const;
 
 export const SNACK_TRAY_SPOTS = [
-  { x: -12.4, z: -0.72, label: 'Snacks Showcase Left' },
-  { x: -10.35, z: -0.72, label: 'Snacks Showcase Right' },
+  { x: -12.4, z: -1.22, label: 'Snacks Showcase Left' },
+  { x: -10.35, z: -1.22, label: 'Snacks Showcase Right' },
 ] as const;
 
 // 3rd Readi (Cold Drinks & Ice Cream Cart) stations
 export const COLD_STATIONS = {
-  chiller: { x: 7.95, z: -1.48, label: 'Electric Ice Chiller' },
-  ice_box: { x: 8.9, z: -1.48, label: 'Crushed Ice Blocks Box' },
-  soda_crate: { x: 9.85, z: -1.48, label: 'Cold Drink Bottles Crate' },
-  icecream_tub: { x: 10.75, z: -1.48, label: 'Ice Cream Mix Tub' },
-  cone_stack: { x: 11.65, z: -1.48, label: 'Waffle Cones Stack' },
+  chiller: { x: 7.95, z: -1.98, label: 'Electric Ice Chiller' },
+  ice_box: { x: 8.9, z: -1.98, label: 'Crushed Ice Blocks Box' },
+  soda_crate: { x: 9.85, z: -1.98, label: 'Cold Drink Bottles Crate' },
+  icecream_tub: { x: 10.75, z: -1.98, label: 'Ice Cream Mix Tub' },
+  cone_stack: { x: 11.65, z: -1.98, label: 'Waffle Cones Stack' },
 } as const;
 
 export const COLD_TRAY_SPOTS = [
-  { x: 8.75, z: -0.72, label: 'Cold Showcase Left' },
-  { x: 10.85, z: -0.72, label: 'Cold Showcase Right' },
+  { x: 8.75, z: -1.22, label: 'Cold Showcase Left' },
+  { x: 10.85, z: -1.22, label: 'Cold Showcase Right' },
 ] as const;
 
 // Free Water Tap & Trash Bin cleanly placed in the alley between Center Shop & Supermarket
-export const WATER_TAP_POS = { x: 3.35, z: -5.0 };
-export const TRASH_BIN_POS = { x: 2.15, z: -5.0 };
+export const WATER_TAP_POS = { x: 3.35, z: -6.0 };
+export const TRASH_BIN_POS = { x: 2.15, z: -6.0 };
 
-// Open Walk-In Supermarket in the Right-Side Building Row (footprint: x 4.4..12.8, z -8.8..-3.8)
+// Open Walk-In Supermarket in the Right-Side Building Row (footprint: x 4.4..12.8, z -9.8..-4.8)
 export const SUPERMARKET_BOUNDS = {
   minX: 4.4,
   maxX: 12.8,
-  minZ: -8.8,
-  maxZ: -3.8,
+  minZ: -9.8,
+  maxZ: -4.8,
 };
 
 // All Street Buildings are Spacious 3x Larger Open Walk-In Shops (Kitchen + 4 Chairs + 2 Tables fit comfortably!)
@@ -489,10 +489,10 @@ export const WOOD_MASTER_CATALOG: WoodMasterCatalogItem[] = [
 export const SHOP_WEEK_DAYS = 7;
 
 // Interactive spots inside the Supermarket
-export const SUPERMARKET_COUNTER_POS = { x: 6.2, z: -7.15 };
-export const SUPERMARKET_AISLE_POS = { x: 10.0, z: -6.95 };
-export const SUPERMARKET_FURNITURE_POS = { x: 10.6, z: -4.9 };
-export const SUPERMARKET_PICKUP_POS = { x: 5.15, z: -4.45 };
+export const SUPERMARKET_COUNTER_POS = { x: 10.35, z: -9.05 };
+export const SUPERMARKET_AISLE_POS = { x: 6.4, z: -7.05 };
+export const SUPERMARKET_FURNITURE_POS = { x: 10.35, z: -7.05 };
+export const SUPERMARKET_PICKUP_POS = { x: 6.4, z: -9.05 };
 
 // Vehicles on Road / Curb
 export const MILKMAN_PARK_POS = { x: -5.6, z: 2.45 };
@@ -1097,3 +1097,19 @@ export const MILKMAN_CATALOG: MilkmanCatalogItem[] = [
 export function formatMoney(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
+
+// Refund 40% of item value when vacating a rented shop
+export const VACATE_REFUND_RATE = 0.4;
+
+export const INTERIOR_TABLE_TEMPLATE = [
+  { id: 'table_a', x: -3.1, z: -10.8 },
+  { id: 'table_b', x: 3.1, z: -10.8 },
+];
+
+export const INTERIOR_CHAIR_TEMPLATE = [
+  { id: 'chair_a1', x: -4.1, z: -10.8 },
+  { id: 'chair_a2', x: -2.1, z: -10.8 },
+  { id: 'chair_b1', x: 2.1, z: -10.8 },
+  { id: 'chair_b2', x: 4.1, z: -10.8 },
+];
+
